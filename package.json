@@ -1,0 +1,71 @@
+{
+  "name": "trawl-mcp",
+  "version": "0.1.0",
+  "description": "Trawl: an MCP server that runs deep, cited research for any AI IDE: web, Reddit, X, YouTube, GitHub, Hacker News, arXiv and more, one ranked list, and quotes the server checks against the source.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "deep-research",
+    "research",
+    "search",
+    "reddit",
+    "claude",
+    "ai-agents",
+    "citations",
+    "searxng"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "author": "Floriani",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FFloriani/trawl.git"
+  },
+  "homepage": "https://github.com/FFloriani/trawl#readme",
+  "bugs": {
+    "url": "https://github.com/FFloriani/trawl/issues"
+  },
+  "bin": {
+    "trawl": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "docs",
+    "docker",
+    "scripts",
+    "README.md",
+    "README.pt-BR.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "doctor": "node dist/index.js doctor",
+    "searxng": "node scripts/searxng.mjs",
+    "searxng:stop": "node scripts/searxng.mjs stop",
+    "radar": "node dist/index.js radar run --due"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@mozilla/readability": "0.6.0",
+    "fast-xml-parser": "5.11.2",
+    "linkedom": "0.18.13",
+    "marked": "18.1.0",
+    "turndown": "7.2.4",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/turndown": "5.0.6",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

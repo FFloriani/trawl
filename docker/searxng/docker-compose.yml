@@ -1,0 +1,15 @@
+# SearXNG local para o Trawl: busca web grátis, sem chave e só neste PC (porta presa em 127.0.0.1).
+# Suba com `npm run searxng` (gera o segredo na primeira vez, sobe o container e liga o SEARXNG_URL).
+name: trawl-searxng
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: trawl-searxng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./config:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?rode npm run searxng para gerar o segredo}

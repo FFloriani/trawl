@@ -1,0 +1,102 @@
+{
+ "tweets": [
+  {
+   "type": "tweet",
+   "id": "2102561495104291156",
+   "url": "https://x.com/m_ferreira28/status/2102561495104291156",
+   "text": "Used the same prompt as him and the results are completly insane. \n\nClaude Opus 5.5 being able to ONE SHOT roblox games is changing completly this next few weeks on the market. \n\nITS CRAZY https://t.co/nQLlEi3jHy",
+   "retweetCount": 13,
+   "replyCount": 17,
+   "likeCount": 591,
+   "quoteCount": 0,
+   "viewCount": 54733,
+   "bookmarkCount": 366,
+   "createdAt": "Wed Sep 23 00:51:38 +0000 2026",
+   "lang": "en",
+   "isReply": false,
+   "conversationId": "2102561495104291156",
+   "author": {
+    "type": "user",
+    "id": "1021181004550156288",
+    "userName": "m_ferreira28",
+    "name": "Nelito",
+    "isBlueVerified": true,
+    "followers": 683
+   }
+  },
+  {
+   "type": "tweet",
+   "id": "2107262186687180967",
+   "url": "https://x.com/ZDoranto/status/2107262186687180967",
+   "text": "Opus 5.5 made this roblox vfx in just 15 minutes #RobloxDev #Roblox #VFX #claude https://t.co/1z4IR7b1NF",
+   "retweetCount": 70,
+   "replyCount": 91,
+   "likeCount": 2439,
+   "quoteCount": 3,
+   "viewCount": 138643,
+   "bookmarkCount": 1172,
+   "createdAt": "Tue Oct 06 00:10:31 +0000 2026",
+   "lang": "en",
+   "isReply": false,
+   "conversationId": "2107262186687180967",
+   "author": {
+    "type": "user",
+    "id": "1275326017666760704",
+    "userName": "ZDoranto",
+    "name": "doranto",
+    "isBlueVerified": true,
+    "followers": 553
+   }
+  },
+  {
+   "type": "tweet",
+   "id": "2107729097094836623",
+   "url": "https://x.com/flash_luffy/status/2107729097094836623",
+   "text": "I think my best one so far, i rly like this one XD\n\n#robloxㅤ #animation #vfx #3D #RobloxStudio #RobloxDev #Claude #opus https://t.co/JS795thPhG",
+   "retweetCount": 2,
+   "replyCount": 3,
+   "likeCount": 35,
+   "quoteCount": 0,
+   "viewCount": 2540,
+   "bookmarkCount": 18,
+   "createdAt": "Wed Oct 07 07:05:51 +0000 2026",
+   "lang": "en",
+   "isReply": false,
+   "conversationId": "2107729097094836623",
+   "author": {
+    "type": "user",
+    "id": "1467244782116384770",
+    "userName": "flash_luffy",
+    "name": "SkyRightWar",
+    "isBlueVerified": false,
+    "followers": 36
+   }
+  },
+  {
+   "type": "tweet",
+   "id": "2108210439813529910",
+   "url": "https://x.com/VlprioN/status/2108210439813529910",
+   "text": "Wow, Opus 5.5 just oneshot this VFX with a single prompt in a whooping 5 seconds.👀\n\n#Roblox #RobloxDevs #realtimeVFX #claude https://t.co/4MwatgM3C5",
+   "retweetCount": 39,
+   "replyCount": 16,
+   "likeCount": 720,
+   "quoteCount": 4,
+   "viewCount": 35860,
+   "bookmarkCount": 432,
+   "createdAt": "Thu Oct 08 14:58:32 +0000 2026",
+   "lang": "en",
+   "isReply": false,
+   "conversationId": "2108210439813529910",
+   "author": {
+    "type": "user",
+    "id": "1608031087824863232",
+    "userName": "VlprioN",
+    "name": "Vlp",
+    "isBlueVerified": false,
+    "followers": 371
+   }
+  }
+ ],
+ "has_next_page": true,
+ "next_cursor": "CURSOR"
+}
