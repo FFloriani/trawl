@@ -59,7 +59,7 @@ Replace the path with yours. On Windows, use forward slashes (`C:/path/to/trawl/
 ```bash
 claude mcp add trawl --scope user -- node "/path/to/trawl/dist/index.js"
 ```
-Optional: copy `integrations/claude-code/skills/pesquisa` to `~/.claude/skills/` to get `/pesquisa`, which runs the collection in parallel subagents.
+Optional: copy `integrations/claude-code/skills/trawl` to `~/.claude/skills/` to get `/trawl`, which runs the collection in parallel subagents.
 
 **Cursor** (`~/.cursor/mcp.json`), **Windsurf** (`~/.codeium/windsurf/mcp_config.json`), **Claude Desktop** (`claude_desktop_config.json`), **Gemini CLI** (`~/.gemini/settings.json`):
 ```json
@@ -95,7 +95,7 @@ args = ["/path/to/trawl/dist/index.js"]
 
 ## Use
 
-- **Full research:** the `pesquisa` prompt (in Claude Code: `/mcp__trawl__pesquisa`, or `/pesquisa` with the skill), or just ask "research X in depth with Trawl". The AI calls `trawl_start` and follows `trawl_next`.
+- **Full research:** the `pesquisa` prompt (in Claude Code: `/mcp__trawl__pesquisa`, or `/trawl` with the skill), or just ask "research X in depth with Trawl". The AI calls `trawl_start` and follows `trawl_next`.
 - **Quick:** the `pesquisa_rapida` prompt.
 - **Community only:** the `comunidade` prompt (Reddit, HN, X, YouTube and GitHub issues from the last days).
 - **One-off:** `trawl_collect` (or `trawl_search` and `trawl_read`).

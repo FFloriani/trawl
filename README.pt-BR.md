@@ -57,7 +57,7 @@ Troque o caminho pelo da sua máquina. No Windows, use barras normais (`C:/camin
 ```bash
 claude mcp add trawl --scope user -- node "/caminho/para/trawl/dist/index.js"
 ```
-Opcional: copie `integrations/claude-code/skills/pesquisa` para `~/.claude/skills/` para ganhar o `/pesquisa`, que dispara a coleta em subagentes paralelos.
+Opcional: copie `integrations/claude-code/skills/trawl` para `~/.claude/skills/` para ganhar o `/trawl`, que dispara a coleta em subagentes paralelos.
 
 **Cursor** (`~/.cursor/mcp.json`), **Windsurf** (`~/.codeium/windsurf/mcp_config.json`), **Claude Desktop** (`claude_desktop_config.json`), **Gemini CLI** (`~/.gemini/settings.json`):
 ```json
@@ -93,7 +93,7 @@ args = ["/caminho/para/trawl/dist/index.js"]
 
 ## Usar
 
-- **Pesquisa completa:** o prompt `pesquisa` (no Claude Code: `/mcp__trawl__pesquisa`, ou `/pesquisa` com a skill), ou peça "pesquise a fundo X com o Trawl". A IA chama `trawl_start` e segue o `trawl_next`.
+- **Pesquisa completa:** o prompt `pesquisa` (no Claude Code: `/mcp__trawl__pesquisa`, ou `/trawl` com a skill), ou peça "pesquise a fundo X com o Trawl". A IA chama `trawl_start` e segue o `trawl_next`.
 - **Rápida:** prompt `pesquisa_rapida`.
 - **Só a comunidade:** prompt `comunidade` (Reddit, HN, X, YouTube e issues do GitHub dos últimos dias).
 - **Avulso:** `trawl_collect` (ou `trawl_search` e `trawl_read`).

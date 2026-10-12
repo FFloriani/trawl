@@ -1,5 +1,5 @@
 ---
-name: pesquisa
+name: trawl
 description: Pesquisa profunda sobre qualquer assunto, com fontes citadas e verificadas, usando o MCP Trawl (ferramentas trawl_*), que busca na web, Reddit, Hacker News, X, YouTube, fóruns, GitHub, arXiv, OpenAlex, Stack Overflow e Wikipedia. Use quando o usuário pedir para pesquisar a fundo, comparar opções, levantar o estado da arte, descobrir o que a comunidade está dizendo sobre algo, ou quando a resposta exigir várias fontes. Não use para uma consulta de um fato só.
 ---
 
