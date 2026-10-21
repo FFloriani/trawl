@@ -46,7 +46,7 @@ npm run searxng
 
 This starts SearXNG on `http://127.0.0.1:8888` (reachable only from your machine), runs a test search and writes `SEARXNG_URL` to `~/.trawl/.env`. No key, no quota. The container comes back by itself whenever Docker starts. To stop it: `npm run searxng:stop`.
 
-If Docker itself is closed when Trawl starts or needs web search (after a reboot, say), Trawl opens Docker Desktop and starts the container in the background. A cold start takes 1 to 3 minutes; until then your AI uses its own web search. Set `TRAWL_SEARXNG_AUTOSTART=0` to turn this off.
+If Docker itself is closed (after a reboot, say), the local SearXNG is down and your AI falls back to its own web search; just open Docker Desktop and the container comes back. Trawl can also open Docker Desktop and start the container for you, but only if you ask (`TRAWL_SEARXNG_AUTOSTART=1`) and only at the moment an agent uses web search: opening a session starts nothing, and Docker stays closed while no research runs. A cold start takes 1 to 3 minutes, so that first search falls back to your AI's own web search. Trawl does not close Docker afterwards.
 
 | Without any key | With a key |
 |---|---|

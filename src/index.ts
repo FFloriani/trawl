@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { config, VERSION } from "./config.ts";
 import { availabilityAll, fanout } from "./connectors/index.ts";
 import { browserPath } from "./core/browser.ts";
-import { kickSearxng } from "./core/searxng.ts";
+import { markServerProcess } from "./core/searxng.ts";
 import { queryTerms } from "./core/text.ts";
 import { listRadars, runDueRadars, runRadar } from "./pipeline/radar.ts";
 import { rankHits } from "./pipeline/rank.ts";
@@ -35,9 +35,9 @@ async function serve(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log.info(`Trawl ${VERSION} pronto (stdio)`);
-  // If the local SearXNG is down (Docker closed after a reboot), start bringing it back now, so
-  // the web search is usually up by the time the first research needs it.
-  void kickSearxng();
+  // Nothing is started here. With TRAWL_SEARXNG_AUTOSTART=1 the local SearXNG (and Docker) is
+  // brought up only when an agent uses web search, from the web connector's availability check.
+  markServerProcess();
   let closing = false;
   // stdin close, SIGINT and SIGTERM can all fire; close once. Calling process.exit() while
   // sockets or pipes are still closing trips a libuv assertion on Windows, so everything is

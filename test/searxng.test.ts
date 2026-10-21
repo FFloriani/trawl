@@ -1,5 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { COOLDOWN_MS, ensureSearxng, isLocalUrl, kickSearxng, searxngEnv, type SearxngEnv } from "../src/core/searxng.ts";
+
+/** Loads the module fresh with the given environment, since the settings are read at import. */
+async function withEnv(vars: Record<string, string | undefined>) {
+  vi.resetModules();
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(vars)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    return await import("../src/core/searxng.ts");
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
 
 /** A fake machine: `daemon` answers in order (the last answer repeats), time moves only when someone sleeps. */
 function machine(daemon: Array<"up" | "down" | "missing">, over: Partial<SearxngEnv> = {}) {
@@ -99,5 +117,25 @@ describe("SearXNG autostart", () => {
 
   it("stays out of the way when no local SearXNG is configured", async () => {
     expect(await kickSearxng()).toBeUndefined();
+  });
+
+  it("never opens Docker unless the user turned it on", async () => {
+    const local = "http://127.0.0.1:8888";
+    expect((await withEnv({ SEARXNG_URL: local, TRAWL_SEARXNG_AUTOSTART: undefined })).searxngAutostartOn()).toBe(false);
+    expect((await withEnv({ SEARXNG_URL: local, TRAWL_SEARXNG_AUTOSTART: "0" })).searxngAutostartOn()).toBe(false);
+    expect((await withEnv({ SEARXNG_URL: local, TRAWL_SEARXNG_AUTOSTART: "1" })).searxngAutostartOn()).toBe(true);
+    // Even when on, only a SearXNG on this machine is ours to start.
+    expect((await withEnv({ SEARXNG_URL: "https://search.example.com", TRAWL_SEARXNG_AUTOSTART: "1" })).searxngAutostartOn()).toBe(false);
+    // And with the default, kicking does nothing at all.
+    const off = await withEnv({ SEARXNG_URL: local, TRAWL_SEARXNG_AUTOSTART: undefined });
+    off.markServerProcess();
+    expect(await off.kickSearxng()).toBeUndefined();
+  });
+
+  it("starts nothing outside the MCP server process, even when turned on", async () => {
+    // A one-shot command (doctor, search) would exit before the background start finished.
+    const cli = await withEnv({ SEARXNG_URL: "http://127.0.0.1:8888", TRAWL_SEARXNG_AUTOSTART: "1" });
+    expect(cli.searxngAutostartOn()).toBe(true);
+    expect(await cli.kickSearxng()).toBeUndefined();
   });
 });

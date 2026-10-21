@@ -44,7 +44,7 @@ npm run searxng
 
 Sobe um SearXNG em `http://127.0.0.1:8888` (só a sua máquina acessa), testa uma busca e grava `SEARXNG_URL` no `~/.trawl/.env`. Sem chave e sem cota. O container volta sozinho quando o Docker abre. Para parar: `npm run searxng:stop`.
 
-Se o próprio Docker estiver fechado quando o Trawl iniciar ou precisar da busca web (depois de reiniciar o PC, por exemplo), o Trawl abre o Docker Desktop e sobe o container em segundo plano. A partida a frio leva de 1 a 3 minutos; até lá a sua IA usa a busca web dela. `TRAWL_SEARXNG_AUTOSTART=0` desliga isso.
+Se o próprio Docker estiver fechado (depois de reiniciar o PC, por exemplo), o SearXNG local fica fora do ar e a sua IA usa a busca web dela; basta abrir o Docker Desktop que o container volta. O Trawl também pode abrir o Docker Desktop e subir o container por você, mas só se você pedir (`TRAWL_SEARXNG_AUTOSTART=1`) e só no momento em que um agente usa a busca web: abrir uma sessão não inicia nada, e o Docker continua fechado enquanto nenhuma pesquisa roda. A partida a frio leva de 1 a 3 minutos, então a primeira busca cai na busca web da própria IA. O Trawl não fecha o Docker depois.
 
 | Sem nenhuma chave | Com chave |
 |---|---|

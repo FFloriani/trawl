@@ -67,8 +67,11 @@ export const config = {
     .map((s) => s.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, ""))
     .filter(Boolean),
   xaiModel: env("XAI_MODEL") ?? "grok-4.7",
-  /** Start the local SearXNG (and Docker Desktop) by itself when it is down. TRAWL_SEARXNG_AUTOSTART=0 turns it off. */
-  searxngAutostart: !["0", "false", "off", "no"].includes((env("TRAWL_SEARXNG_AUTOSTART") ?? "1").toLowerCase()),
+  /**
+   * Opt-in: start the local SearXNG (and open Docker Desktop) by itself when it is down.
+   * Off unless TRAWL_SEARXNG_AUTOSTART=1: a server must not open apps on the user's machine uninvited.
+   */
+  searxngAutostart: ["1", "true", "on", "yes"].includes((env("TRAWL_SEARXNG_AUTOSTART") ?? "").toLowerCase()),
   /** Comma list that orders the web providers, e.g. "searxng,brave,tavily,exa". */
   webProviders: (env("TRAWL_WEB_PROVIDERS") ?? "searxng,brave,tavily,exa")
     .split(",")

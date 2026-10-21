@@ -174,12 +174,24 @@ export function searxngAutostartOn(): boolean {
   return Boolean(url) && config.searxngAutostart && isLocalUrl(url!);
 }
 
+let serving = false;
+
 /**
- * Brings the local SearXNG back if it is down. Safe to call often: it returns at once when the
- * server answers, and the lock keeps attempts apart. Never throws.
+ * Called by the long-lived MCP server. Only there may SearXNG be brought back: a one-shot command
+ * (doctor, search, read, radar) exits before the background start could finish.
+ */
+export function markServerProcess(): void {
+  serving = true;
+}
+
+/**
+ * Brings the local SearXNG back if it is down. Meant to be called when an agent actually needs
+ * web search, never when the server merely starts: Docker is heavy and stays closed otherwise.
+ * Safe to call often: it returns at once when the server answers, and the lock keeps attempts
+ * apart. Never throws.
  */
 export function kickSearxng(): Promise<SearxngResult | undefined> {
-  if (!searxngAutostartOn()) return Promise.resolve(undefined);
+  if (!serving || !searxngAutostartOn()) return Promise.resolve(undefined);
   return ensureSearxng(searxngEnv(config.keys.searxngUrl!)).then(
     (r) => (last = r),
     (err) => {

@@ -33,6 +33,7 @@ import {
   type SubQuestion,
 } from "../pipeline/session.ts";
 import { callRemoteTool } from "../core/remote-mcp.ts";
+import { searxngAutostartOn } from "../core/searxng.ts";
 import { collectText, formatRead, rankedLine, reportLine, thousands } from "./format.ts";
 
 const DEEPWIKI_MCP = "https://mcp.deepwiki.com/mcp";
@@ -139,7 +140,9 @@ const scheduleHint = () =>
   `Para rodar sozinho, agende o comando \`node "${process.argv[1] ?? "dist/index.js"}" radar run --due\` (Agendador de Tarefas do Windows, cron ou launchd): ele roda só os radares vencidos e grava o resumo de cada um.`;
 
 function hostSearchHint(): string {
-  return "Busca web do servidor fora do ar. Se o SearXNG local está configurado, o Trawl já está subindo o Docker e o contêiner em segundo plano (1 a 3 min). Enquanto isso, use a busca web nativa da sua IDE e registre os resultados úteis com trawl_add_sources.";
+  return searxngAutostartOn()
+    ? "Busca web do servidor fora do ar. O Trawl está subindo o Docker e o contêiner em segundo plano (1 a 3 min). Enquanto isso, use a busca web nativa da sua IDE e registre os resultados úteis com trawl_add_sources."
+    : "Busca web do servidor desligada (SearXNG fora do ar ou sem provedor). Use a busca web nativa da sua IDE e registre os resultados úteis com trawl_add_sources.";
 }
 
 function httpUrl(raw: string): string {

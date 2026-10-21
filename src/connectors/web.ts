@@ -1,7 +1,7 @@
 import { config } from "../config.ts";
 import { getJson, TTL } from "../core/http.ts";
 import { log } from "../core/log.ts";
-import { kickSearxng, lastSearxngResult, searxngAutostartOn, searxngHealthy } from "../core/searxng.ts";
+import { isLocalUrl, kickSearxng, lastSearxngResult, searxngAutostartOn, searxngHealthy } from "../core/searxng.ts";
 import type { Availability, Connector, SearchHit, SearchQuery } from "../core/types.ts";
 import { daysAgoDate, errMessage, isoDate, oneLine } from "../core/util.ts";
 
@@ -164,7 +164,11 @@ async function searxngUp(): Promise<{ up: boolean }> {
 function searxngDownNote(): string {
   const base = `SearXNG fora do ar em ${config.keys.searxngUrl}`;
   const last = lastSearxngResult();
-  if (!searxngAutostartOn()) return `${base}: rode \`npm run searxng\` na pasta do Trawl (precisa do Docker aberto)`;
+  if (!searxngAutostartOn()) {
+    const how = `abra o Docker Desktop (o contêiner volta sozinho) ou rode \`npm run searxng\` na pasta do Trawl`;
+    // The Trawl never opens Docker on its own unless asked to.
+    return isLocalUrl(config.keys.searxngUrl!) ? `${base}: ${how}. Para o Trawl abrir o Docker sozinho, defina TRAWL_SEARXNG_AUTOSTART=1` : `${base}: o servidor não responde`;
+  }
   if (last?.state === "down") return `${base}: ${last.reason}. Depois de abrir o Docker, rode \`npm run searxng\` na pasta do Trawl`;
   return `${base}: o Trawl está subindo o Docker e o SearXNG em segundo plano (1 a 3 min). Enquanto isso, use a busca web nativa da IDE e registre os resultados com trawl_add_sources`;
 }
