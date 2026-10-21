@@ -17,7 +17,8 @@
 - **A real time window:** `since_days` on every dated source, with a final check that drops what falls outside.
 - **Junk filter:** GitHub repos with bought stars are flagged ⚠ SUSPEITO and sink; cross-posted Reddit threads collapse into one.
 - **Memory and radar:** `trawl_recall` shows what earlier researches found; `trawl_radar` repeats a search on a schedule and shows only what is new.
-- **A research conductor:** sessions saved to disk go through plan → collect → cross-check → verify → report. `trawl_next` always says the next step, and the report refuses any citation that was not registered.
+- **Deep reading, tracked:** the server keeps the full text of everything it reads, and a reading ledger records how much of each text actually reached your AI. Long sources it only saw as short passages (video transcripts, tutorials, documentation) go to a deep-reading phase: read in full, findings registered with checked quotes. The report says how much was read in depth, not just "read".
+- **A research conductor:** sessions saved to disk go through plan → collect → deep read → cross-check → verify → report. `trawl_next` always says the next step, and the report refuses any citation that was not registered.
 
 Your AI does the thinking and the writing; the server searches, stores and enforces the method. It never calls an LLM on its own (except Grok, if you turn on X search through xAI).
 
@@ -44,6 +45,8 @@ npm run searxng
 ```
 
 This starts SearXNG on `http://127.0.0.1:8888` (reachable only from your machine), runs a test search and writes `SEARXNG_URL` to `~/.trawl/.env`. No key, no quota. The container comes back by itself whenever Docker starts. To stop it: `npm run searxng:stop`.
+
+If Docker itself is closed when Trawl starts or needs web search (after a reboot, say), Trawl opens Docker Desktop and starts the container in the background. A cold start takes 1 to 3 minutes; until then your AI uses its own web search. Set `TRAWL_SEARXNG_AUTOSTART=0` to turn this off.
 
 | Without any key | With a key |
 |---|---|
@@ -121,16 +124,16 @@ On Linux/macOS, the same command (`node /path/to/trawl/dist/index.js radar run -
 | `trawl_doctor` | Which sources are on, and how to turn on the rest |
 | `trawl_collect` | One-step collection: variants × sources, one ranking, the best read in full, relevant passages |
 | `trawl_search` | Search several sources at once, in one ranking |
-| `trawl_read` | Read a whole source as clean Markdown (in a session, keeps the text for quote checks) |
+| `trawl_read` | Read a whole source as clean Markdown, in windows (in a session, keeps the text for quote checks and records how much you read) |
 | `trawl_ask_repo` | Ask DeepWiki how a GitHub repo works (AI answer: confirm in the code) |
-| `trawl_start` | Open a research session |
+| `trawl_start` | Open a research session (`deep_read`: how many long sources must be read in full; 0 skips the phase) |
 | `trawl_plan` | Register sub-questions, source layers, official domains and forums |
 | `trawl_add_sources` | Register sources found outside the server |
 | `trawl_add_findings` | Register findings (each with sources; key findings with a checked quote) and gaps |
 | `trawl_crosscheck` | Cross-check findings: conflicts, consensus, blind spots |
 | `trawl_verify` | Register the verdict for each key finding ("confirmed" needs a quote from the primary source) |
 | `trawl_report` | Build the report (Markdown + HTML) and validate every citation |
-| `trawl_next` | Current phase and the exact next step |
+| `trawl_next` | Current phase and the exact next step (`read_more` lists more long sources to study, even after the report) |
 | `trawl_sessions` | List saved researches |
 | `trawl_recall` | Search the findings of all earlier researches |
 | `trawl_radar` | Create, run, list and delete radars |
@@ -141,7 +144,7 @@ The full method is in [docs/METHOD.md](docs/METHOD.md) (Portuguese) and is also 
 
 - `~/.trawl/.env`: keys
 - `~/.trawl/cache/`: search cache (saves quota)
-- `~/.trawl/research/<date>-<topic>--<id>/`: each research: `session.json`, `sources.jsonl`, `claims.jsonl`, `gaps.jsonl`, `verifications.jsonl`, `texts/` (text of every source read), `report.md` and `report.html`
+- `~/.trawl/research/<date>-<topic>--<id>/`: each research: `session.json`, `sources.jsonl`, `claims.jsonl`, `gaps.jsonl`, `verifications.jsonl`, `reading.jsonl` (how much of each text reached the model), `texts/` (text of every source read), `report.md` and `report.html`
 - `~/.trawl/radar/<name>/`: radar definition, URLs already seen and one digest per run
 
 Settings can also be set as environment variables (`TRAWL_HOME`, `TRAWL_FORUMS`, `TRAWL_BROWSER`, …); see [.env.example](.env.example).

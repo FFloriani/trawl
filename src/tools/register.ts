@@ -10,7 +10,7 @@ import { numbersIn, queryTerms } from "../core/text.ts";
 import { SOURCE_NAMES, type SourceName } from "../core/types.ts";
 import { domainOf, errMessage, mapLimit, normalizeUrl, oneLine, sourceId } from "../core/util.ts";
 import { collect } from "../pipeline/collect.ts";
-import { checkQuote, keepRead, quoteFailureText, type QuoteStatus } from "../pipeline/evidence.ts";
+import { checkQuote, keepRead, loadStoredRead, quoteFailureText, type QuoteStatus } from "../pipeline/evidence.ts";
 import { collectionBrief, computeStatus, nextActionText, RULES } from "../pipeline/phases.ts";
 import { deleteRadar, isDue, listRadars, runDueRadars, runRadar, saveRadar, type RadarRun } from "../pipeline/radar.ts";
 import { rankHits, trustTier } from "../pipeline/rank.ts";
@@ -18,11 +18,13 @@ import { recall, recallLines } from "../pipeline/recall.ts";
 import { renderReport, writeReport, type ReportInput } from "../pipeline/report.ts";
 import {
   addFindings,
+  addReading,
   addSources,
   addVerifications,
   createSession,
   hitToSource,
   listSessions,
+  loadReading,
   loadSession,
   updateMeta,
   type Quote,
@@ -31,7 +33,7 @@ import {
   type SubQuestion,
 } from "../pipeline/session.ts";
 import { callRemoteTool } from "../core/remote-mcp.ts";
-import { collectText, formatRead, rankedLine, reportLine } from "./format.ts";
+import { collectText, formatRead, rankedLine, reportLine, thousands } from "./format.ts";
 
 const DEEPWIKI_MCP = "https://mcp.deepwiki.com/mcp";
 
@@ -137,7 +139,7 @@ const scheduleHint = () =>
   `Para rodar sozinho, agende o comando \`node "${process.argv[1] ?? "dist/index.js"}" radar run --due\` (Agendador de Tarefas do Windows, cron ou launchd): ele roda só os radares vencidos e grava o resumo de cada um.`;
 
 function hostSearchHint(): string {
-  return "Busca web do servidor desligada (sem provedor). Use a busca web nativa da sua IDE e registre os resultados úteis com trawl_add_sources.";
+  return "Busca web do servidor fora do ar. Se o SearXNG local está configurado, o Trawl já está subindo o Docker e o contêiner em segundo plano (1 a 3 min). Enquanto isso, use a busca web nativa da sua IDE e registre os resultados úteis com trawl_add_sources.";
 }
 
 function httpUrl(raw: string): string {
@@ -298,7 +300,7 @@ export function registerTools(server: McpServer): void {
         ].filter(Boolean);
         const text = collectText(res, args.show, args.queries, header);
         const next = args.session_id
-          ? "\nPróximo: registre os achados com trawl_add_findings. Achado-chave precisa de quotes: copie dos trechos acima a frase exata (idioma original, 5+ palavras). Para ver uma fonte inteira, trawl_read com source_id."
+          ? "\nPróximo: registre os achados com trawl_add_findings. Achado-chave precisa de quotes: copie dos trechos acima a frase exata (idioma original, 5+ palavras). Para ver uma fonte inteira, trawl_read com source_id. O que veio aqui são trechos: fontes longas serão cobradas na fase de leitura funda."
           : "";
         return text + next;
       }),
@@ -322,18 +324,36 @@ export function registerTools(server: McpServer): void {
     (args) =>
       guard(async () => {
         let url = args.url;
+        const session = args.session_id ? await loadSession(args.session_id) : undefined;
         if (!url && args.source_id) {
-          if (!args.session_id) throw new Error("source_id exige session_id");
-          url = (await loadSession(args.session_id)).sources.get(args.source_id)?.url;
+          if (!session) throw new Error("source_id exige session_id");
+          url = session.sources.get(args.source_id)?.url;
           if (!url) throw new Error(`fonte ${args.source_id} não está na sessão`);
         }
         if (!url) throw new Error("informe url ou source_id");
         const target = httpUrl(url);
-        const r = await readUrl(target);
+        // A source the session already stored is served from that text: the same windows every
+        // time, no new fetch. Otherwise it is read now and, in a session, kept for quote checks.
+        const known = session?.sources.get(args.source_id ?? sourceId(target));
+        let r = args.session_id && known ? await loadStoredRead(args.session_id, known) : undefined;
+        if (!r) {
+          r = await readUrl(target);
+          if (args.session_id) await keepRead(args.session_id, r, target);
+        }
         const id = sourceId(r.url);
-        // In a session the full text is kept, so quotes from it can be checked later.
-        if (args.session_id) await keepRead(args.session_id, r, target);
-        return formatRead(r, id, args.offset, args.max_chars);
+        let progress: string | undefined;
+        if (args.session_id) {
+          // The ledger records what reached the model, which is what the deep-reading phase checks.
+          const from = Math.min(args.offset, r.content.length);
+          const to = Math.min(args.offset + args.max_chars, r.content.length);
+          const ids = [...new Set([id, sourceId(target)])];
+          await addReading(args.session_id, ids.map((source) => ({ source, total: r!.content.length, from, to })));
+          const st = (await loadReading(args.session_id)).get(id);
+          if (st) {
+            progress = `Leitura nesta sessão: ${thousands(st.read)} de ${thousands(st.total)} caracteres lidos em janelas (${Math.round((st.read / st.total) * 100)}%)${st.deep ? "; leitura funda desta fonte concluída" : ""}.`;
+          }
+        }
+        return formatRead(r, id, args.offset, args.max_chars, progress);
       }),
   );
 
@@ -402,6 +422,13 @@ export function registerTools(server: McpServer): void {
         depth: z.enum(["quick", "standard", "deep"]).default("standard"),
         since_days: z.number().int().min(1).max(3650).optional().describe("Janela de tempo padrão das buscas"),
         language: z.string().default("pt-BR").describe("Idioma do relatório"),
+        deep_read: z
+          .number()
+          .int()
+          .min(0)
+          .max(60)
+          .optional()
+          .describe("Quantas fontes longas (vídeo com transcrição, tutorial, documentação) ler inteiras antes do cruzamento. Padrão pela profundidade: quick 0, standard 6, deep 12. Use um número alto para estudar todo o material coletado, 0 para pular a fase"),
       },
       annotations: { readOnlyHint: false, openWorldHint: false },
     },
@@ -414,6 +441,7 @@ export function registerTools(server: McpServer): void {
           depth: args.depth,
           sinceDays: args.since_days,
           language: args.language,
+          deepRead: args.deep_read,
         });
         const avail = await availabilityAll();
         const data = await loadSession(meta.id);
@@ -910,14 +938,28 @@ export function registerTools(server: McpServer): void {
     "trawl_next",
     {
       title: "Próximo passo",
-      description: "Mostra em que fase a pesquisa está, o que cada sub-pergunta ainda precisa e o próximo passo exato. Chame sempre que terminar uma etapa.",
-      inputSchema: { session_id: sessionIdSchema },
+      description:
+        "Mostra em que fase a pesquisa está, o que cada sub-pergunta ainda precisa e o próximo passo exato. Chame sempre que terminar uma etapa. Com read_more, lista mais fontes longas para leitura funda (útil para estudar o material de uma pesquisa já concluída).",
+      inputSchema: {
+        session_id: sessionIdSchema,
+        read_more: z
+          .number()
+          .int()
+          .min(0)
+          .max(100)
+          .optional()
+          .describe("Quantas fontes longas contar para a leitura funda nesta consulta (padrão: a da sessão)"),
+        read_sources: z
+          .array(z.enum([...SOURCE_NAMES, "page"]))
+          .optional()
+          .describe('Só estes tipos de fonte na leitura funda, ex.: ["youtube"] para estudar as transcrições de vídeo'),
+      },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     (args) =>
       guard(async () => {
         const data = await loadSession(args.session_id);
-        return nextActionText(data, computeStatus(data), await availableSources(data.meta));
+        return nextActionText(data, computeStatus(data, args.read_more, args.read_sources), await availableSources(data.meta));
       }),
   );
 

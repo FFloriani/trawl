@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "../config.ts";
 import type { LayerName } from "../connectors/index.ts";
@@ -55,6 +55,10 @@ export interface SessionMeta {
   officialDomains?: string[];
   /** Discourse forums about the subject, searched by the "forums" source. */
   forums?: string[];
+  /** How many long sources must be read in full before the crosscheck; default comes from the depth. */
+  deepRead?: number;
+  /** Set on sessions that keep the reading ledger; older ones only know the size of stored texts. */
+  readingLedger?: boolean;
   crosscheck?: Crosscheck;
   report?: { md: string; html: string; at: string; copies?: string[] };
 }
@@ -70,9 +74,76 @@ export interface SourceRecord {
   metrics?: Metrics;
   tags?: string[];
   snippet?: string;
+  /** Ranking score (0-100) and trust tier from the search that found it; orders the deep reading. */
+  score?: number;
+  tier?: string;
   subquestions: string[];
   addedAt: string;
   readAt?: string;
+}
+
+/**
+ * What of a source's stored text actually reached the model. The server keeps every text it
+ * reads, but `trawl_collect` shows only a few short passages; without this ledger a 46k-character
+ * tutorial and a 2k-character post both count as "read".
+ */
+export interface ReadingRecord {
+  source: string;
+  /** Size of the stored text, in characters. */
+  total: number;
+  /** Characters of passages `trawl_collect` showed (their position in the text is not tracked). */
+  shown?: number;
+  /** A window of the stored text served by `trawl_read`, in characters. */
+  from?: number;
+  to?: number;
+  at: string;
+}
+
+export interface ReadingState {
+  total: number;
+  /** Characters of the text the model got in `trawl_read` windows. */
+  read: number;
+  /** Characters seen: windows plus passages (passages count for at most PASSAGE_SHARE of the text). */
+  seen: number;
+  /** The model read enough of the text itself to have studied it. */
+  deep: boolean;
+}
+
+/** A source shorter than this is covered by the passages alone. */
+export const DEEP_MIN_CHARS = 5_000;
+/** Passages are samples: they never count for more than this share of a source. */
+export const PASSAGE_SHARE = 0.4;
+/** Characters a `trawl_read` must have served for a source to count as read in depth. */
+export const deepTarget = (total: number): number => Math.min(Math.round(total * 0.6), 30_000);
+
+export function foldReading(records: ReadingRecord[]): Map<string, ReadingState> {
+  const by = new Map<string, { total: number; shown: number; windows: Array<[number, number]> }>();
+  for (const r of records) {
+    const s = by.get(r.source) ?? { total: 0, shown: 0, windows: [] };
+    s.total = Math.max(s.total, r.total);
+    s.shown += r.shown ?? 0;
+    if (r.from !== undefined && r.to !== undefined && r.to > r.from) s.windows.push([r.from, r.to]);
+    by.set(r.source, s);
+  }
+  const out = new Map<string, ReadingState>();
+  for (const [id, s] of by) {
+    // Union of the windows, so reading the same stretch twice counts once.
+    let read = 0;
+    let end = -1;
+    let start = 0;
+    for (const [a, b] of [...s.windows].sort((x, y) => x[0] - y[0])) {
+      if (a > end) {
+        if (end > start) read += end - start;
+        start = a;
+        end = b;
+      } else end = Math.max(end, b);
+    }
+    if (end > start) read += end - start;
+    read = Math.min(read, s.total);
+    const seen = Math.min(s.total, read + Math.min(s.shown, Math.round(s.total * PASSAGE_SHARE)));
+    out.set(id, { total: s.total, read, seen, deep: s.total > 0 && read >= deepTarget(s.total) });
+  }
+  return out;
 }
 
 /**
@@ -123,6 +194,8 @@ export interface SessionData {
   claims: Map<string, ClaimRecord>;
   gaps: GapRecord[];
   verifications: Map<string, VerificationRecord>;
+  /** Per source with stored text: how much of it the model saw. */
+  reading: Map<string, ReadingState>;
 }
 
 const FILES = {
@@ -131,6 +204,7 @@ const FILES = {
   claims: "claims.jsonl",
   gaps: "gaps.jsonl",
   verifications: "verifications.jsonl",
+  reading: "reading.jsonl",
   texts: "texts",
 } as const;
 
@@ -212,6 +286,8 @@ export interface CreateInput {
   language?: string;
   depth?: Depth;
   sinceDays?: number;
+  /** Overrides how many long sources the research must read in full. */
+  deepRead?: number;
 }
 
 export async function createSession(input: CreateInput): Promise<{ meta: SessionMeta; dir: string }> {
@@ -227,6 +303,8 @@ export async function createSession(input: CreateInput): Promise<{ meta: Session
     language: input.language ?? "pt-BR",
     depth: input.depth ?? "standard",
     sinceDays: input.sinceDays,
+    ...(input.deepRead !== undefined ? { deepRead: input.deepRead } : {}),
+    readingLedger: true,
     createdAt: now(),
     updatedAt: now(),
   };
@@ -263,7 +341,18 @@ export async function loadSession(id: string): Promise<SessionData> {
   const verifications = new Map<string, VerificationRecord>();
   for (const v of await readJsonl<VerificationRecord>(join(dir, FILES.verifications))) verifications.set(v.claim, v);
 
-  return { meta, dir, sources, claims, gaps: await readJsonl<GapRecord>(join(dir, FILES.gaps)), verifications };
+  const reading = foldReading(await readJsonl<ReadingRecord>(join(dir, FILES.reading)));
+  // Sessions from before the reading ledger: all that is known is the size of the stored text.
+  for (const s of sources.values()) {
+    if (meta.readingLedger || reading.has(s.id) || !s.readAt) continue;
+    try {
+      reading.set(s.id, { total: (await stat(textFile(dir, s.id))).size, read: 0, seen: 0, deep: false });
+    } catch {
+      // read but not stored (or an invalid id): nothing to study
+    }
+  }
+
+  return { meta, dir, sources, claims, gaps: await readJsonl<GapRecord>(join(dir, FILES.gaps)), verifications, reading };
 }
 
 function isUrlTitle(s: { title: string; url: string }): boolean {
@@ -286,7 +375,7 @@ export async function updateMeta(id: string, fn: (meta: SessionMeta) => SessionM
   });
 }
 
-export function hitToSource(hit: SearchHit, subquestion?: string): SourceRecord {
+export function hitToSource(hit: SearchHit, subquestion?: string, rank?: { score: number; tier: string }): SourceRecord {
   return {
     id: sourceId(hit.url),
     url: normalizeUrl(hit.url),
@@ -298,6 +387,7 @@ export function hitToSource(hit: SearchHit, subquestion?: string): SourceRecord 
     metrics: hit.metrics,
     tags: hit.tags,
     snippet: hit.snippet,
+    ...(rank ? { score: rank.score, tier: rank.tier } : {}),
     subquestions: subquestion ? [subquestion] : [],
     addedAt: now(),
   };
@@ -306,6 +396,20 @@ export function hitToSource(hit: SearchHit, subquestion?: string): SourceRecord 
 export async function addSources(id: string, records: SourceRecord[]): Promise<void> {
   const dir = await sessionDir(id);
   await appendJsonl(join(dir, FILES.sources), records);
+}
+
+/** Only the reading ledger, folded: cheap enough to ask after every `trawl_read` window. */
+export async function loadReading(id: string): Promise<Map<string, ReadingState>> {
+  const dir = await sessionDir(id);
+  return foldReading(await readJsonl<ReadingRecord>(join(dir, FILES.reading)));
+}
+
+/** Appends to the reading ledger (what of each stored text reached the model). */
+export async function addReading(id: string, records: Array<Omit<ReadingRecord, "at">>): Promise<void> {
+  if (!records.length) return;
+  const dir = await sessionDir(id);
+  const at = now();
+  await appendJsonl(join(dir, FILES.reading), records.map((r) => ({ ...r, at })));
 }
 
 export interface FindingInput {

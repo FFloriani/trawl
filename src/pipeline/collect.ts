@@ -4,7 +4,7 @@ import { fold, queryTerms, tokenize, topPassages } from "../core/text.ts";
 import { errMessage, mapLimit, normalizeUrl, sourceId } from "../core/util.ts";
 import { keepRead, readWithTimeout } from "./evidence.ts";
 import { pickToRead, rankHits, type Ranked } from "./rank.ts";
-import { addSources, hitToSource } from "./session.ts";
+import { addReading, addSources, hitToSource } from "./session.ts";
 
 // One call does what used to take a dozen: every query variant on every source, one ranked
 // list, the best sources read in full and only the passages that matter sent back. Everything
@@ -73,7 +73,10 @@ export interface CollectRead {
   id: string;
   title: string;
   passages: string[];
+  /** Size of the stored text. */
   chars: number;
+  /** Characters of the passages shown: what of `chars` actually reached the model. */
+  shown: number;
   /** Read because it is one of the most-commented discussions. */
   discussion?: boolean;
   note?: string;
@@ -285,7 +288,7 @@ export async function collect(opts: CollectOptions): Promise<CollectResult> {
   const hits = ranked.map((r) => r.hit);
   for (const t of Object.values(tally)) t!.count = 0;
   for (const h of hits) (tally[h.source] ??= { count: 0, ms: 0, errors: [], outOfWindow: 0 }).count++;
-  if (opts.sessionId && hits.length) await addSources(opts.sessionId, ranked.map((r) => hitToSource(r.hit, opts.subquestion)));
+  if (opts.sessionId && hits.length) await addSources(opts.sessionId, ranked.map((r) => hitToSource(r.hit, opts.subquestion, r)));
 
   // The best sources overall, plus the most-commented discussions they left out: comments are
   // where people describe what they actually did, which guides and search snippets miss.
@@ -304,17 +307,13 @@ export async function collect(opts: CollectOptions): Promise<CollectResult> {
       if (opts.sessionId) await keepRead(opts.sessionId, res, r.hit.url, opts.subquestion);
       // Comments are short, so a discussion gets a couple more passages.
       const k = discussion || DISCUSSION_SOURCES.has(r.hit.source) ? opts.passages + 2 : opts.passages;
-      return {
-        ranked: r,
-        id,
-        title: res.title || r.hit.title,
-        passages: topPassages(res.content, opts.passageTerms ?? opts.terms, k, opts.passageChars),
-        chars: res.content.length,
-        discussion,
-        note: res.note,
-      };
+      const passages = topPassages(res.content, opts.passageTerms ?? opts.terms, k, opts.passageChars);
+      const shown = passages.reduce((n, p) => n + p.length, 0);
+      // The ledger records what reached the model, so a long text seen only in passages is not "read".
+      if (opts.sessionId) await addReading(opts.sessionId, [{ source: id, total: res.content.length, shown }]);
+      return { ranked: r, id, title: res.title || r.hit.title, passages, chars: res.content.length, shown, discussion, note: res.note };
     } catch (err) {
-      return { ranked: r, id, title: r.hit.title, passages: [], chars: 0, discussion, error: errMessage(err) };
+      return { ranked: r, id, title: r.hit.title, passages: [], chars: 0, shown: 0, discussion, error: errMessage(err) };
     }
   });
 

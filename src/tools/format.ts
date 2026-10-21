@@ -1,9 +1,13 @@
 import type { SourceReport } from "../connectors/index.ts";
 import type { ReadResult, SearchHit, SourceName } from "../core/types.ts";
 import { oneLine, sourceId } from "../core/util.ts";
-import type { CollectResult } from "../pipeline/collect.ts";
+import type { CollectRead, CollectResult } from "../pipeline/collect.ts";
 import type { Ranked } from "../pipeline/rank.ts";
 import { metricsText } from "../pipeline/report.ts";
+import { DEEP_MIN_CHARS } from "../pipeline/session.ts";
+
+export const thousands = (n: number) => n.toLocaleString("pt-BR");
+const share =(r: CollectRead) => (r.chars ? Math.round((r.shown / r.chars) * 100) : 0);
 
 export function hitLine(h: SearchHit): string {
   const id = sourceId(h.url);
@@ -25,8 +29,11 @@ export function reportLine(report: Partial<Record<SourceName, SourceReport>>): s
     .join(" · ");
 }
 
-/** Read content is wrapped and labelled so the model treats it as data, never as instructions. */
-export function formatRead(r: ReadResult, id: string, offset: number, maxChars: number): string {
+/**
+ * Read content is wrapped and labelled so the model treats it as data, never as instructions.
+ * `progress` says how much of the source the session has seen so far.
+ */
+export function formatRead(r: ReadResult, id: string, offset: number, maxChars: number, progress?: string): string {
   const total = r.content.length;
   const slice = r.content.slice(offset, offset + maxChars);
   const header = [
@@ -50,6 +57,7 @@ export function formatRead(r: ReadResult, id: string, offset: number, maxChars: 
     slice,
     "</conteudo_externo>",
     more,
+    ...(progress ? [progress] : []),
   ].join("\n");
 }
 
@@ -120,12 +128,28 @@ export function collectText(res: CollectResult, show: number, queries: string[],
       out.push(
         "",
         `#### [${r.id}] ${oneLine(r.title, 140)}${r.discussion ? " (discussão mais comentada)" : ""}`,
-        [r.ranked.tier, h.source, h.published?.slice(0, 10), metricsText(h.metrics), `${r.chars} caracteres lidos`].filter(Boolean).join(" · "),
+        [
+          r.ranked.tier,
+          h.source,
+          h.published?.slice(0, 10),
+          metricsText(h.metrics),
+          `${thousands(r.chars)} caracteres no texto guardado, ${thousands(r.shown)} mostrados (${share(r)}%)`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
         ...(r.note ? [`Nota: ${r.note}`] : []),
         ...r.passages.map((p) => p.split("\n").map((l) => `> ${l}`).join("\n") + "\n"),
       );
     }
     out.push("</conteudo_externo>");
+    // Long sources only sampled: say so, so nobody mistakes a passage for the whole source.
+    const sampled = ok.filter((r) => r.chars >= DEEP_MIN_CHARS && share(r) < 50);
+    if (sampled.length) {
+      out.push(
+        "",
+        `Fontes longas vistas só em trechos: ${sampled.map((r) => `[${r.id}] ${thousands(r.chars)} car. (${share(r)}%)`).join("; ")}. Para o conteúdo inteiro, trawl_read com source_id; a fase de leitura funda cobra as melhores.`,
+      );
+    }
     const failed = res.reads.filter((r) => r.error);
     if (failed.length) out.push("", "Não deu para ler: " + failed.map((r) => `[${r.id}] ${oneLine(r.error, 100)}`).join("; "));
   }

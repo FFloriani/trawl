@@ -40,7 +40,8 @@ beforeAll(async () => {
     new StdioClientTransport({
       command: process.execPath,
       args: [SERVER],
-      env: { ...process.env, TRAWL_HOME: process.env.TRAWL_HOME!, TRAWL_LOG: "error" } as Record<string, string>,
+      // The tests must not open Docker on whoever runs them.
+      env: { ...process.env, TRAWL_HOME: process.env.TRAWL_HOME!, TRAWL_LOG: "error", TRAWL_SEARXNG_AUTOSTART: "0" } as Record<string, string>,
     }),
   );
 });
@@ -137,7 +138,7 @@ describe("Trawl over real MCP stdio", () => {
     });
 
     const next = await call("trawl_next", { session_id: id });
-    expect(next).toContain("4/5 verificação");
+    expect(next).toContain("5/6 verificação");
     const claimId = /- (C[0-9a-z]{5}) \[fact, chave\]/.exec(next)?.[1];
     expect(claimId).toBeTruthy();
 

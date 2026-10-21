@@ -21,9 +21,10 @@ Este é o roteiro que o servidor impõe, para qualquer assunto. A IA da IDE pens
 | 0. Escopo | Pergunta, para que decisão serve, quem lê, janela de tempo. Só pergunte ao usuário o que muda a pesquisa. O `trawl_start` já mostra o que pesquisas anteriores acharam sobre o tema. | `trawl_start`, `trawl_recall` |
 | 1. Plano | Quebrar em sub-perguntas que não se sobrepõem e, juntas, cobrem tudo. Cada uma recebe as camadas de fonte que a respondem. Se o assunto tem site oficial ou fórum próprio, eles entram no plano. | `trawl_plan` |
 | 2. Coleta | Por sub-pergunta, um `trawl_collect` com 2 a 4 variações da busca: ele busca em todas as fontes, ordena num ranking único, lê as melhores e devolve os trechos. Registre achados (achado-chave com a frase exata) e lacunas. Com subagentes, uma sub-pergunta por agente, em paralelo. | `trawl_collect`, `trawl_read`, `trawl_add_findings`, `trawl_add_sources` |
-| 3. Cruzamento | Onde as fontes se contradizem, qual lado tem evidência mais forte, o que todas confirmam e o que ninguém cobriu. | `trawl_crosscheck` |
-| 4. Verificação | Cada achado-chave é conferido na fonte original: confirmado, corrigido, sem prova ou falso. Confirmado e corrigido exigem a frase da fonte primária. | `trawl_verify` |
-| 5. Relatório | Resposta direta primeiro, seções que já dizem a conclusão e citações por id. O servidor monta o resto. | `trawl_report` |
+| 3. Leitura funda | Fonte longa guardada pelo servidor mas vista só em trechos (vídeo com transcrição, tutorial, documentação) é lida inteira, em janelas, e vira achados com a frase exata. O servidor registra quanto de cada texto chegou ao modelo e cobra as melhores. | `trawl_read`, `trawl_add_findings` |
+| 4. Cruzamento | Onde as fontes se contradizem, qual lado tem evidência mais forte, o que todas confirmam e o que ninguém cobriu. | `trawl_crosscheck` |
+| 5. Verificação | Cada achado-chave é conferido na fonte original: confirmado, corrigido, sem prova ou falso. Confirmado e corrigido exigem a frase da fonte primária. | `trawl_verify` |
+| 6. Relatório | Resposta direta primeiro, seções que já dizem a conclusão e citações por id. O servidor monta o resto. | `trawl_report` |
 
 `trawl_next` diz a qualquer momento em que fase a sessão está e o que falta.
 
@@ -35,6 +36,17 @@ Cada fonte lida dentro da sessão (por `trawl_collect` ou `trawl_read`) tem o te
 - Não bateu: nada é registrado e o servidor devolve a frase mais parecida que existe na fonte, para a IA corrigir. Paráfrase e tradução não passam: a frase vai no idioma original.
 - Fonte que o servidor não consegue ler (login, página só em JavaScript): o achado entra marcado "sem conferir", mas não serve para `confirmed`.
 - Em achado do tipo `stat`, o servidor avisa se o número do achado não aparece na citação.
+
+## Leitura funda
+
+O servidor guarda o texto inteiro de cada fonte que lê, mas `trawl_collect` devolve só alguns trechos curtos (3 de ~600 caracteres por fonte, por padrão). Para uma notícia ou um post isso basta. Para um tutorial, um vídeo ou uma documentação longa, o que vale está no passo a passo, nos parâmetros e nos limites, e o trecho que "bate com a busca" quase nunca os traz.
+
+- **Registro de leitura** (`reading.jsonl`): cada `trawl_collect` anota quantos caracteres de cada texto foram mostrados; cada janela de `trawl_read` anota o trecho entregue. Janelas se somam sem contar duas vezes o mesmo pedaço; os trechos da coleta valem no máximo 40% do texto.
+- **Lida a fundo:** a fonte foi entregue ao modelo em janelas de `trawl_read` que somam pelo menos 60% do texto (no máximo 30 mil caracteres).
+- **A fase `read`** vem depois da coleta (quando cada sub-pergunta já bateu a meta) e antes do cruzamento. O servidor escolhe as melhores fontes com 5 mil caracteres ou mais por: pontuação da busca × quanto vale ler aquele tipo de fonte (vídeo e página 1,0; arXiv 0,9; fórum e repositório 0,8; thread de Reddit e HN 0,7; X 0,2) × tamanho (logaritmo), com bônus para a que já sustenta achados. Quantas: `quick` 0, `standard` 6, `deep` 12, ou `deep_read` no `trawl_start` (use um número alto para estudar todo o material coletado).
+- **Como sair da fase:** ler a fonte (janelas de `trawl_read` até o fim) e registrar os achados, ou registrar uma lacuna com o id da fonte e o motivo ("[S…] não lida: repete a documentação").
+- **Depois do relatório** a sessão não volta para a fase `read`. `trawl_next` oferece a leitura a quem quer estudar o material (`read_more` amplia a lista), e o relatório traz a seção "Material lido a fundo" e a cobertura na metodologia.
+- **Vídeo:** a transcrição vem com marcas `[mm:ss]` a cada ~30 s. Ao ler, ponha o minuto no achado. A legenda automática erra nomes e números: na dúvida, marque (?) e confira na descrição.
 
 ## Ranking único
 
@@ -109,5 +121,6 @@ Fonte oficial só existe para algumas perguntas (regra, preço, lei, especifica�
 | Achados por sub-pergunta | 2 | 3 | 4 |
 | Domínios diferentes | 1 | 2 | 3 |
 | Camadas planejadas cobertas | não exige | exige (achado ou lacuna) | exige |
+| Fontes longas lidas a fundo | 0 | até 6 | até 12 |
 | Cruzamento | opcional | obrigatório | obrigatório |
 | Verificação | até 3 achados-chave | até 12 | até 25, mais toda estatística |

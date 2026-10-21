@@ -2,7 +2,7 @@ import { readUrl } from "../connectors/reader.ts";
 import type { ReadResult } from "../core/types.ts";
 import { closestPassage, quoteInText } from "../core/text.ts";
 import { normalizeUrl, sourceId } from "../core/util.ts";
-import { addSources, loadSourceText, saveSourceText, type Quote, type SourceRecord } from "./session.ts";
+import { addReading, addSources, loadSourceText, saveSourceText, type Quote, type SourceRecord } from "./session.ts";
 
 // The server, not the model, decides whether a quote is real: it compares the quote word for
 // word with the text it read from the source itself. A model that paraphrases, translates or
@@ -29,8 +29,12 @@ export function storedText(r: ReadResult): string {
   return `# ${r.title}\n\n${r.content}`;
 }
 
-/** Saves a read into the session: the text for quote checks and the source marked as read. */
-export async function keepRead(sessionId: string, r: ReadResult, originalUrl?: string, subquestion?: string): Promise<string> {
+/**
+ * Saves a read into the session: the text for quote checks and the source marked as read.
+ * `ledger` also opens its line in the reading ledger (what of the text reached the model); a
+ * fetch made only to check a quote leaves it off, so it does not become a deep-reading target.
+ */
+export async function keepRead(sessionId: string, r: ReadResult, originalUrl?: string, subquestion?: string, ledger = true): Promise<string> {
   const id = sourceId(r.url);
   const at = new Date().toISOString();
   const base: SourceRecord = {
@@ -55,7 +59,28 @@ export async function keepRead(sessionId: string, r: ReadResult, originalUrl?: s
     await saveSourceText(sessionId, alias, storedText(r));
   }
   await addSources(sessionId, records);
+  if (ledger) await addReading(sessionId, records.map((s) => ({ source: s.id, total: r.content.length })));
   return id;
+}
+
+/**
+ * Rebuilds a read from what the session stored, so a long source can be served in windows
+ * without fetching it again (and the windows always cut the same text).
+ */
+export async function loadStoredRead(sessionId: string, source: SourceRecord): Promise<ReadResult | undefined> {
+  const stored = await loadSourceText(sessionId, source.id);
+  if (!stored) return undefined;
+  return {
+    url: source.url,
+    title: source.title,
+    source: source.source,
+    published: source.published,
+    author: source.author,
+    metrics: source.metrics,
+    // storedText() puts the title on top, so a quote of the headline also counts.
+    content: stored.replace(/^# [^\n]*\n\n/, ""),
+    note: source.readAt ? `Texto guardado na sessão (lido em ${source.readAt.slice(0, 10)}).` : undefined,
+  };
 }
 
 export type QuoteStatus =
@@ -84,7 +109,7 @@ export async function checkQuote(sessionId: string, source: SourceRecord, quoteT
 
   try {
     const r = await readWithTimeout(source.url);
-    await keepRead(sessionId, r, source.url);
+    await keepRead(sessionId, r, source.url, undefined, false);
     full = storedText(r);
   } catch {
     // Cannot read it (login wall, JavaScript-only page, timeout): accepted but labelled, and a

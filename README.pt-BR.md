@@ -15,7 +15,8 @@
 - **Janela de dias de verdade:** `since_days` em toda fonte com data, com conferência final que descarta o que ficou fora.
 - **Filtro de lixo:** repositório com estrela comprada vem marcado como ⚠ SUSPEITO e vai para o fim; post repetido em vários subreddits vira um só.
 - **Memória e radar:** `trawl_recall` mostra o que pesquisas anteriores acharam; `trawl_radar` repete uma busca de tempos em tempos e mostra só o que é novo.
-- **Um maestro de pesquisa:** sessões salvas em disco passam por plano, coleta, cruzamento, verificação e relatório. `trawl_next` sempre diz o próximo passo, e o relatório recusa citação que não foi registrada.
+- **Leitura funda, com controle:** o servidor guarda o texto inteiro de tudo que lê, e um registro de leitura anota quanto de cada texto chegou de fato à sua IA. Fonte longa que ela só viu em trechos curtos (transcrição de vídeo, tutorial, documentação) vai para uma fase de leitura funda: lida inteira, com os achados registrados e a citação conferida. O relatório diz quanto foi lido a fundo, não só "lido".
+- **Um maestro de pesquisa:** sessões salvas em disco passam por plano, coleta, leitura funda, cruzamento, verificação e relatório. `trawl_next` sempre diz o próximo passo, e o relatório recusa citação que não foi registrada.
 
 A IA da IDE pensa e escreve; o servidor busca, guarda e cobra o método. Ele não chama LLM nenhum por conta própria (exceto o Grok, se você ligar a busca no X pela xAI).
 
@@ -42,6 +43,8 @@ npm run searxng
 ```
 
 Sobe um SearXNG em `http://127.0.0.1:8888` (só a sua máquina acessa), testa uma busca e grava `SEARXNG_URL` no `~/.trawl/.env`. Sem chave e sem cota. O container volta sozinho quando o Docker abre. Para parar: `npm run searxng:stop`.
+
+Se o próprio Docker estiver fechado quando o Trawl iniciar ou precisar da busca web (depois de reiniciar o PC, por exemplo), o Trawl abre o Docker Desktop e sobe o container em segundo plano. A partida a frio leva de 1 a 3 minutos; até lá a sua IA usa a busca web dela. `TRAWL_SEARXNG_AUTOSTART=0` desliga isso.
 
 | Sem nenhuma chave | Com chave |
 |---|---|
@@ -119,16 +122,16 @@ No Linux e no macOS, o mesmo comando (`node /caminho/para/trawl/dist/index.js ra
 | `trawl_doctor` | Mostra as fontes ligadas e como ligar o resto |
 | `trawl_collect` | Coleta num passo: variações × fontes, ranking único, leitura das melhores e trechos relevantes |
 | `trawl_search` | Busca em várias fontes ao mesmo tempo, em ranking único |
-| `trawl_read` | Lê uma fonte inteira em Markdown (na sessão, guarda o texto para conferir citações) |
+| `trawl_read` | Lê uma fonte inteira em Markdown, em janelas (na sessão, guarda o texto para conferir citações e registra quanto você leu) |
 | `trawl_ask_repo` | Pergunta ao DeepWiki como um repositório funciona (resposta de IA, conferir no código) |
-| `trawl_start` | Abre uma sessão de pesquisa |
+| `trawl_start` | Abre uma sessão de pesquisa (`deep_read`: quantas fontes longas ler inteiras; 0 pula a fase) |
 | `trawl_plan` | Registra sub-perguntas, camadas de fonte, domínios oficiais e fóruns do assunto |
 | `trawl_add_sources` | Registra fontes achadas fora do servidor |
 | `trawl_add_findings` | Registra achados (com fonte; o achado-chave com a frase exata, conferida) e lacunas |
 | `trawl_crosscheck` | Cruza achados: conflitos, consensos, pontos cegos |
 | `trawl_verify` | Registra o veredito de cada achado-chave ("confirmado" exige a frase da fonte primária) |
 | `trawl_report` | Gera o relatório (Markdown + HTML) e valida as citações |
-| `trawl_next` | Fase atual e próximo passo |
+| `trawl_next` | Fase atual e próximo passo (`read_more` lista mais fontes longas para estudar, mesmo depois do relatório) |
 | `trawl_sessions` | Lista pesquisas salvas |
 | `trawl_recall` | Busca nos achados de todas as pesquisas anteriores |
 | `trawl_radar` | Cria, roda, lista e apaga radares de novidades |
@@ -139,7 +142,7 @@ O método completo está em [docs/METHOD.md](docs/METHOD.md) e também é servid
 
 - `~/.trawl/.env`: chaves
 - `~/.trawl/cache/`: cache das buscas (economiza cota)
-- `~/.trawl/research/<data>-<tema>--<id>/`: cada pesquisa, com `session.json`, `sources.jsonl`, `claims.jsonl`, `gaps.jsonl`, `verifications.jsonl`, `texts/` (texto das fontes lidas), `report.md` e `report.html`
+- `~/.trawl/research/<data>-<tema>--<id>/`: cada pesquisa, com `session.json`, `sources.jsonl`, `claims.jsonl`, `gaps.jsonl`, `verifications.jsonl`, `reading.jsonl` (quanto de cada texto chegou ao modelo), `texts/` (texto das fontes lidas), `report.md` e `report.html`
 - `~/.trawl/radar/<nome>/`: definição do radar, URLs já vistas e um resumo por execução
 
 Os ajustes também valem como variáveis de ambiente (`TRAWL_HOME`, `TRAWL_FORUMS`, `TRAWL_BROWSER`…); veja o [.env.example](.env.example).

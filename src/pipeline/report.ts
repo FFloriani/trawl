@@ -4,7 +4,7 @@ import { Marked } from "marked";
 import { VERSION } from "../config.ts";
 import type { Metrics } from "../core/types.ts";
 import { compactNumber, domainOf, slugify } from "../core/util.ts";
-import { layerOf } from "./phases.ts";
+import { layerOf, readingStatus } from "./phases.ts";
 import type { SessionData, SourceRecord } from "./session.ts";
 
 export interface ReportInput {
@@ -143,6 +143,26 @@ export function renderReport(data: SessionData, input: ReportInput): RenderedRep
     }
   }
 
+  // Sources the model read through, one by one: the study material behind the findings.
+  const reading = readingStatus(data, 0);
+  const cites = new Map<string, number>();
+  for (const c of data.claims.values()) for (const id of c.sources) cites.set(id, (cites.get(id) ?? 0) + 1);
+  const studied = new Map<string, { s: SourceRecord; total: number; n: number }>();
+  for (const [id, st] of data.reading) {
+    const s = data.sources.get(id);
+    if (!s || !st.deep) continue;
+    const prev = studied.get(s.url);
+    studied.set(s.url, { s, total: Math.max(st.total, prev?.total ?? 0), n: Math.max(cites.get(id) ?? 0, prev?.n ?? 0) });
+  }
+  if (studied.size) {
+    md.push("## Material lido a fundo", "", "_Fontes que o modelo leu inteiras (não só trechos); os achados delas estão acima, com a citação conferida._", "");
+    for (const { s, total, n } of [...studied.values()].sort((a, b) => b.n - a.n || b.total - a.total).slice(0, 30)) {
+      const bits = [s.author, domainOf(s.url), s.published?.slice(0, 10), `${total.toLocaleString("pt-BR")} caracteres`, `${n} achado${n === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
+      md.push(`- [${s.title.replace(/[[\]]/g, "")}](${s.url}) (${bits})`);
+    }
+    md.push("");
+  }
+
   if (data.gaps.length) {
     md.push("## Lacunas", "");
     for (const g of data.gaps) md.push(`- ${g.subquestion}: ${g.text}`);
@@ -155,7 +175,13 @@ export function renderReport(data: SessionData, input: ReportInput): RenderedRep
     "## Metodologia",
     "",
     `- Sub-perguntas: ${(meta.plan?.subquestions ?? []).map((s) => `${s.id} ${s.question} [${s.layers.join(", ")}]`).join("; ")}`,
-    `- Fontes registradas: ${data.sources.size} (${[...byKind].map(([k, v]) => `${k} ${v}`).join(", ")}); lidas na íntegra: ${[...data.sources.values()].filter((s) => s.readAt).length}`,
+    `- Fontes registradas: ${data.sources.size} (${[...byKind].map(([k, v]) => `${k} ${v}`).join(", ")})`,
+    // "Read" by the server is not "seen" by the model: the ledger says which is which.
+    ...(reading.stored
+      ? [
+          `- Leitura: texto guardado de ${reading.stored} fontes (${reading.chars.toLocaleString("pt-BR")} caracteres); lidas a fundo pelo modelo: ${reading.deep}; só em trechos: ${reading.partial}; sem leitura registrada: ${reading.unseen}`,
+        ]
+      : []),
     `- Achados: ${data.claims.size}; verificados: ${verifs.length}`,
     meta.sinceDays ? `- Janela: últimos ${meta.sinceDays} dias` : "- Janela: sem limite de data",
     "",

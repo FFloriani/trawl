@@ -1,6 +1,7 @@
 import { config } from "../config.ts";
 import { getJson, TTL } from "../core/http.ts";
 import { log } from "../core/log.ts";
+import { kickSearxng, lastSearxngResult, searxngAutostartOn, searxngHealthy } from "../core/searxng.ts";
 import type { Availability, Connector, SearchHit, SearchQuery } from "../core/types.ts";
 import { daysAgoDate, errMessage, isoDate, oneLine } from "../core/util.ts";
 
@@ -146,26 +147,26 @@ const exa: Provider = {
 
 const ALL: Record<string, Provider> = { searxng, brave, tavily, exa };
 
-let searxngHealth: { at: number; up: boolean; error?: string } | undefined;
+let searxngHealth: { at: number; up: boolean } | undefined;
 
-/** Whether the configured SearXNG answers, cached one minute (availability runs on every search). */
-async function searxngUp(): Promise<{ up: boolean; error?: string }> {
-  if (searxngHealth && Date.now() - searxngHealth.at < 60_000) return searxngHealth;
-  const base = config.keys.searxngUrl!.replace(/\/+$/, "");
-  // Body drained and timer cleared right away: a pending abort or open body at exit trips a
-  // libuv assertion on Windows.
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 3000);
-  try {
-    const res = await fetch(`${base}/healthz`, { signal: ctl.signal });
-    await res.arrayBuffer().catch(() => undefined);
-    searxngHealth = { at: Date.now(), up: true };
-  } catch (err) {
-    searxngHealth = { at: Date.now(), up: false, error: errMessage(err) };
-  } finally {
-    clearTimeout(timer);
-  }
+/**
+ * Whether the configured SearXNG answers, cached one minute (availability runs on every search);
+ * five seconds while Trawl is bringing it back, so the search returns as soon as it is up.
+ */
+async function searxngUp(): Promise<{ up: boolean }> {
+  const ttl = lastSearxngResult()?.state === "starting" ? 5_000 : 60_000;
+  if (searxngHealth && Date.now() - searxngHealth.at < ttl) return searxngHealth;
+  searxngHealth = { at: Date.now(), up: await searxngHealthy(config.keys.searxngUrl!) };
   return searxngHealth;
+}
+
+/** Why the local SearXNG is missing and what is being done about it. */
+function searxngDownNote(): string {
+  const base = `SearXNG fora do ar em ${config.keys.searxngUrl}`;
+  const last = lastSearxngResult();
+  if (!searxngAutostartOn()) return `${base}: rode \`npm run searxng\` na pasta do Trawl (precisa do Docker aberto)`;
+  if (last?.state === "down") return `${base}: ${last.reason}. Depois de abrir o Docker, rode \`npm run searxng\` na pasta do Trawl`;
+  return `${base}: o Trawl está subindo o Docker e o SearXNG em segundo plano (1 a 3 min). Enquanto isso, use a busca web nativa da IDE e registre os resultados com trawl_add_sources`;
 }
 
 export function webProviders(): Provider[] {
@@ -193,7 +194,9 @@ export const web: Connector = {
     let down = "";
     if (active.includes("searxng") && !(await searxngUp()).up) {
       active = active.filter((id) => id !== "searxng");
-      down = `SearXNG fora do ar em ${config.keys.searxngUrl}: rode \`npm run searxng\` na pasta do Trawl (precisa do Docker aberto)`;
+      // Heals in the background (opens Docker if needed); this answer does not wait for it.
+      void kickSearxng();
+      down = searxngDownNote();
     }
     if (active.length) return { ok: true, mode: `provedores: ${active.join(" → ")} (failover nessa ordem)`, ...(down ? { note: down } : {}) };
     if (down) return { ok: false, mode: "SearXNG configurado, mas fora do ar", note: down };
