@@ -1,7 +1,7 @@
 import { LAYERS, type LayerName } from "../connectors/index.ts";
 import type { SourceName } from "../core/types.ts";
 import { domainOf, oneLine } from "../core/util.ts";
-import { DEEP_MIN_CHARS, type ClaimRecord, type Depth, type SessionData, type SourceRecord, type SubQuestion } from "./session.ts";
+import { checkOn, DEEP_MIN_CHARS, type ClaimRecord, type Depth, type SessionData, type SourceRecord, type SubQuestion } from "./session.ts";
 
 export type Phase = "plan" | "collect" | "read" | "crosscheck" | "verify" | "report" | "done";
 
@@ -180,6 +180,10 @@ export interface SubStatus {
 
 export interface Status {
   phase: Phase;
+  /** The phases this session goes through, in order (the trust check and the deep reading are optional). */
+  phases: Phase[];
+  /** Whether the trust check (crosscheck, verification, checked quotes) is on for this session. */
+  checking: boolean;
   rules: DepthRules;
   subs: SubStatus[];
   sourcesTotal: number;
@@ -240,20 +244,31 @@ export function computeStatus(data: SessionData, readCap?: number, readKinds?: r
   const verified = data.verifications.size;
   const sources = [...data.sources.values()];
 
-  const reading = readingStatus(data, readCap ?? data.meta.deepRead ?? rules.deepRead, readKinds);
+  const readTarget = readCap ?? data.meta.deepRead ?? rules.deepRead;
+  const reading = readingStatus(data, readTarget, readKinds);
+
+  // The trust check is off unless the user asked for it in this research; the phases follow it.
+  const checking = checkOn(data.meta);
+  const phases: Phase[] = ["plan", "collect"];
+  if (readTarget > 0) phases.push("read");
+  if (checking && rules.crosscheck) phases.push("crosscheck");
+  if (checking) phases.push("verify");
+  phases.push("report");
 
   let phase: Phase;
   if (!data.meta.plan?.subquestions.length) phase = "plan";
   else if (subs.some((s) => !s.ok)) phase = "collect";
   // Once the report exists the phase does not go back; the reading is offered at "done" instead.
   else if (reading.pending.length && !data.meta.report) phase = "read";
-  else if (rules.crosscheck && !data.meta.crosscheck) phase = "crosscheck";
-  else if (toVerify.length) phase = "verify";
+  else if (checking && rules.crosscheck && !data.meta.crosscheck) phase = "crosscheck";
+  else if (checking && toVerify.length) phase = "verify";
   else if (!data.meta.report) phase = "report";
   else phase = "done";
 
   return {
     phase,
+    phases,
+    checking,
     rules,
     subs,
     sourcesTotal: sources.length,
@@ -272,6 +287,7 @@ export function collectionBrief(
   sinceDays?: number,
   problems: string[] = [],
   available?: ReadonlySet<string>,
+  check = true,
 ): string {
   const rules = RULES[depth];
   const all: string[] = sub.sources?.length ? [...new Set(sub.sources)] : [...new Set(sub.layers.flatMap((l) => [...LAYERS[l].sources]))];
@@ -294,7 +310,9 @@ export function collectionBrief(
       : "",
     emptyLayers.length && !hostSearch ? `   Camadas sem fonte ligada (${emptyLayers.join(", ")}): registre como lacuna com layer.` : "",
     `2. Se um trecho promete mais do que mostra, \`trawl_read\` com source_id e session_id. Prefira a fonte original a quem só repercute. Vídeo, tutorial e documentação longos só mostram trechos aqui: não os leia inteiros agora, a fase de leitura funda cobra isso depois, nas melhores.`,
-    `3. \`trawl_add_findings\` com subquestion="${sub.id}": cada achado com texto curto, tipo (fact|stat|opinion|inference), os ids [S…] que o sustentam e key=true se a conclusão depende dele. Achado-chave leva quotes: a frase exata copiada do trecho (idioma original, 5+ palavras); o servidor confere no texto da fonte e recusa se não bater. Registre em gaps o que procurou e não achou.`,
+    check
+      ? `3. \`trawl_add_findings\` com subquestion="${sub.id}": cada achado com texto curto, tipo (fact|stat|opinion|inference), os ids [S…] que o sustentam e key=true se a conclusão depende dele. Achado-chave leva quotes: a frase exata copiada do trecho (idioma original, 5+ palavras); o servidor confere no texto da fonte e recusa se não bater. Registre em gaps o que procurou e não achou.`
+      : `3. \`trawl_add_findings\` com subquestion="${sub.id}": cada achado com texto curto, tipo (fact|stat|opinion|inference) e os ids [S…] que o sustentam. Não precisa de citação literal: a checagem de confiança está desligada nesta pesquisa. Registre em gaps o que procurou e não achou.`,
     `Meta: pelo menos ${rules.minClaims} achados de ${rules.minDomains} domínio(s) diferente(s)${rules.layersRequired ? ", e cada camada com achado ou lacuna registrada" : ""}.`,
     "Opinião de Reddit, HN ou X é tipo opinion; número só é stat com a fonte original do número.",
   ]
@@ -302,15 +320,21 @@ export function collectionBrief(
     .join("\n");
 }
 
-const PHASE_LABEL: Record<Phase, string> = {
-  plan: "1/6 plano",
-  collect: "2/6 coleta",
-  read: "3/6 leitura funda",
-  crosscheck: "4/6 cruzamento",
-  verify: "5/6 verificação",
-  report: "6/6 relatório",
+const PHASE_NAME: Record<Phase, string> = {
+  plan: "plano",
+  collect: "coleta",
+  read: "leitura funda",
+  crosscheck: "cruzamento",
+  verify: "verificação",
+  report: "relatório",
   done: "concluída",
 };
+
+/** "3/5 leitura funda": the position counts only the phases this session actually goes through. */
+function phaseLabel(status: Status): string {
+  const i = status.phases.indexOf(status.phase);
+  return i < 0 ? PHASE_NAME[status.phase] : `${i + 1}/${status.phases.length} ${PHASE_NAME[status.phase]}`;
+}
 
 const thousands = (n: number) => n.toLocaleString("pt-BR");
 
@@ -342,24 +366,36 @@ function readList(sessionId: string, list: ReadCandidate[], max = 40): string[] 
   ];
 }
 
-const READ_RULES = [
-  "Regras de quem lê (valem para todas as fontes acima):",
-  "- Extraia o que serve à pergunta: passos na ordem, parâmetros e números (com a unidade), limites, versões, nomes exatos de menus, ferramentas e propriedades, erros e a correção, e o que o autor diz que NÃO funciona.",
-  "- Um achado por ideia verificável; um procedimento vira um achado com os passos numerados. Em vídeo, ponha o minuto [mm:ss] no texto do achado.",
-  "- kind: vídeo, fórum e relato de uso são opinion (experiência de quem fez); documentação, especificação e código são fact; número só é stat com a frase que o contém.",
-  "- quotes: a frase exata copiada do texto (idioma original, 5+ palavras) em todo stat e todo achado-chave; o servidor confere palavra por palavra.",
-  "- Legenda automática erra nomes e números: na dúvida escreva (?) e confira na descrição. Não complete com o que você já sabe.",
-  "- Se o que leu contradiz um achado já registrado, registre o novo e cite o id do contrariado no texto (o cruzamento usa isso).",
-  "- Devolva ao coordenador só 3 linhas: a fonte, quantos achados registrou e o mais novo; o resto fica no servidor.",
-];
+function readRules(check: boolean): string[] {
+  return [
+    "Regras de quem lê (valem para todas as fontes acima):",
+    "- Extraia o que serve à pergunta: passos na ordem, parâmetros e números (com a unidade), limites, versões, nomes exatos de menus, ferramentas e propriedades, erros e a correção, e o que o autor diz que NÃO funciona.",
+    "- Um achado por ideia; um procedimento vira um achado com os passos numerados. Em vídeo, ponha o minuto [mm:ss] no texto do achado.",
+    "- kind: vídeo, fórum e relato de uso são opinion (experiência de quem fez); documentação, especificação e código são fact; número só é stat com a fonte que o traz.",
+    check
+      ? "- quotes: a frase exata copiada do texto (idioma original, 5+ palavras) em todo stat e todo achado-chave; o servidor confere palavra por palavra."
+      : "- Sem quotes: a checagem de confiança está desligada nesta pesquisa; escreva cada achado com o que a fonte diz, sem copiar frases.",
+    "- Legenda automática erra nomes e números: na dúvida escreva (?) e confira na descrição. Não complete com o que você já sabe.",
+    check
+      ? "- Se o que leu contradiz um achado já registrado, registre o novo e cite o id do contrariado no texto (o cruzamento usa isso)."
+      : "- Se o que leu contradiz um achado já registrado, registre o novo e cite o id do contrariado no texto.",
+    "- Devolva ao coordenador só 3 linhas: a fonte, quantos achados registrou e o mais novo; o resto fica no servidor.",
+  ];
+}
 
 /** `available` = sources switched on here; when given, collection briefs skip the others. */
 export function nextActionText(data: SessionData, status: Status, available?: ReadonlySet<string>): string {
   const { meta } = data;
   const id = meta.id;
-  const lines: string[] = [`## Sessão ${id}: fase ${PHASE_LABEL[status.phase]}`, `Pergunta: ${meta.question}`];
+  const lines: string[] = [`## Sessão ${id}: fase ${phaseLabel(status)}`, `Pergunta: ${meta.question}`];
   lines.push(
-    `Profundidade: ${meta.depth} · fontes registradas: ${status.sourcesTotal} (lidas: ${status.sourcesRead}) · achados: ${status.claimsTotal} · verificados: ${status.verified}`,
+    [
+      `Profundidade: ${meta.depth}`,
+      `checagem de confiança: ${status.checking ? "ligada" : "desligada"}`,
+      `fontes registradas: ${status.sourcesTotal} (lidas: ${status.sourcesRead})`,
+      `achados: ${status.claimsTotal}`,
+      ...(status.checking ? [`verificados: ${status.verified}`] : []),
+    ].join(" · "),
   );
   const rd = status.reading;
   if (rd.stored) {
@@ -394,7 +430,7 @@ export function nextActionText(data: SessionData, status: Status, available?: Re
       lines.push(
         "Colete para as sub-perguntas pendentes. Se sua IDE tem subagentes (Claude Code, Codex), dispare um por bloco abaixo, em paralelo, passando o bloco inteiro. Se não tem, faça um bloco por vez.",
         "",
-        ...pending.map((s) => collectionBrief(id, s.sub, meta.depth, meta.sinceDays, s.problems, available) + "\n"),
+        ...pending.map((s) => collectionBrief(id, s.sub, meta.depth, meta.sinceDays, s.problems, available, status.checking) + "\n"),
         `Ao terminar, chame \`trawl_next\` com session_id="${id}".`,
       );
       break;
@@ -406,7 +442,7 @@ export function nextActionText(data: SessionData, status: Status, available?: Re
         "Se sua IDE tem subagentes (Claude Code, Codex), dispare um por fonte, em paralelo, passando o bloco (ou a linha) da fonte e as regras abaixo (fontes curtas, de até ~15 mil caracteres, podem ir juntas em um agente só). Se não tem, leia uma por vez.",
         "",
         ...readList(id, pend),
-        ...READ_RULES,
+        ...readRules(status.checking),
         "",
         `Ao terminar, chame \`trawl_next\` com session_id="${id}". Fonte que decidir não ler: registre uma lacuna com o id e o motivo (ex.: "[S…] não lida: repete a documentação").`,
       );
@@ -440,8 +476,12 @@ export function nextActionText(data: SessionData, status: Status, available?: Re
         "- summary: a resposta direta em um parágrafo, primeiro o que é certo, depois o que é disputado;",
         "- sections: 3 a 5 seções com títulos que já dizem a conclusão; texto corrido, cite com os ids entre colchetes, ex.: [S1a2b3c] ou [S1a2b3c, S4d5e6f];",
         "- conclusion: implicações e próximos passos, sem repetir o texto.",
-        "Cite só ids registrados na sessão: o servidor recusa o relatório se houver id desconhecido. Achados com verdict false não entram; corrected entram já corrigidos.",
-        "O servidor acrescenta sozinho: placar da verificação, guia do que afirmar ou evitar, o que a comunidade diz, lacunas, metodologia e lista de fontes.",
+        status.checking
+          ? "Cite só ids registrados na sessão: o servidor recusa o relatório se houver id desconhecido. Achados com verdict false não entram; corrected entram já corrigidos."
+          : "Cite só ids registrados na sessão: o servidor recusa o relatório se houver id desconhecido.",
+        status.checking
+          ? "O servidor acrescenta sozinho: placar da verificação, guia do que afirmar ou evitar, o que a comunidade diz, lacunas, metodologia e lista de fontes."
+          : "O servidor acrescenta sozinho: o que a comunidade diz, lacunas, metodologia e lista de fontes. Esta pesquisa não passou por checagem de confiança: apresente os achados como o que as fontes dizem, sem chamá-los de verificados.",
       );
       break;
     case "done": {
@@ -453,7 +493,7 @@ export function nextActionText(data: SessionData, status: Status, available?: Re
           `Leitura funda disponível: ${pend.length} fonte(s) longa(s) com texto guardado e só vistas em trechos. Para estudar o material, leia-as, registre os achados e, se mudarem a conclusão, gere o relatório de novo (\`trawl_report\` com rerender=true remonta só as seções automáticas).`,
           "",
           ...readList(id, pend),
-          ...READ_RULES,
+          ...readRules(status.checking),
         );
       }
       break;

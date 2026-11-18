@@ -1,4 +1,4 @@
-import { browserPath, renderHtml } from "../core/browser.ts";
+import { browserPath, isChallengeText, renderHtml } from "../core/browser.ts";
 import { htmlToMarkdown } from "../core/extract.ts";
 import { request, TTL } from "../core/http.ts";
 import type { ReadResult } from "../core/types.ts";
@@ -7,7 +7,7 @@ import { arxivIdFromUrl, readArxiv } from "./arxiv.ts";
 import { isForumTopic, readForumTopic } from "./forums.ts";
 import { readGithubDiscussion, readGithubIssue, readGithubRepo } from "./github.ts";
 import { readHnItem } from "./hackernews.ts";
-import { readRedditThread, redditThreadId } from "./reddit.ts";
+import { readRedditThread, readSubreddit, redditThreadId, resolveRedditShare, subredditTarget } from "./reddit.ts";
 import { readSteamNews, steamNewsAppId, steamNewsPostId } from "./steam.ts";
 import { readXPost } from "./x.ts";
 import { readYoutube, youtubeId } from "./youtube.ts";
@@ -19,7 +19,15 @@ export async function readUrl(url: string): Promise<ReadResult> {
   const u = new URL(url);
   const host = u.hostname.replace(/^(www|old|new|np|m)\./, "");
 
-  if (host === "reddit.com" && redditThreadId(url)) return readRedditThread(url);
+  if (host === "redd.it") {
+    const id = u.pathname.split("/").filter(Boolean)[0];
+    if (id && /^[a-z0-9]+$/i.test(id)) return readRedditThread(`https://www.reddit.com/comments/${id}/`);
+  }
+  if (host === "reddit.com") {
+    if (redditThreadId(url)) return readRedditThread(url);
+    if (/^\/r\/[A-Za-z0-9_]+\/s\/[A-Za-z0-9]+/.test(u.pathname)) return readRedditThread(await resolveRedditShare(url));
+    if (subredditTarget(url)) return readSubreddit(url);
+  }
 
   if (host === "news.ycombinator.com" && u.searchParams.get("id")) return readHnItem(u.searchParams.get("id")!);
 
@@ -79,6 +87,10 @@ async function readPage(url: string): Promise<ReadResult> {
         rendered = `Tentativa com navegador falhou: ${err instanceof Error ? err.message : String(err)}.`;
       }
     }
+    // A bot check ("prove your humanity", "just a moment") is never content, and is never solved.
+    if (isChallengeText(page.markdown) || /verificação anti-robô/.test(rendered)) {
+      throw new Error(`a página pediu verificação anti-robô (prova de humano); o Trawl não contorna.${blockHint(res.url)}`);
+    }
     const thin = page.markdown.length < 400;
     return {
       url: res.url,
@@ -97,6 +109,15 @@ async function readPage(url: string): Promise<ReadResult> {
     };
   }
   return { url: res.url, title: textTitle(res.text) ?? url, source: "page", content: res.text, note: res.truncated ? "Conteúdo truncado." : undefined };
+}
+
+/** What to do instead when a site with its own reader blocks the generic page reader. */
+function blockHint(url: string): string {
+  const host = new URL(url).hostname.replace(/^(www|old|new|np|m)\./, "");
+  if (host === "reddit.com") {
+    return " No Reddit, o Trawl lê posts (link com /comments/), a página de um subreddit (reddit.com/r/Nome, /r/Nome/new, /r/Nome/top) e busca com trawl_search (subreddit:Nome termos).";
+  }
+  return " Tente outra fonte com o mesmo conteúdo, ou o arquivo da página em web.archive.org.";
 }
 
 /** Title of a Markdown/text page: front-matter `title:` or the first `# ` heading. */

@@ -11,14 +11,14 @@
 - **One-step collection (`trawl_collect`):** several query variants across several sources, one ranked list, the best sources read in full, and only the relevant passages sent back. A research that used to take ~35 tool calls fits in 5 to 10.
 - **Many sources in parallel:** web (free local SearXNG), Reddit (posts and comments), Hacker News, X, YouTube (with transcripts), Discourse forums, GitHub (repos, issues, Discussions, code via grep.app/GitHub/Sourcegraph), arXiv, OpenAlex, Stack Overflow, Wikipedia, MCP Registry, SkillsMP. Votes, stars, views, citations and dates come along.
 - **One ranking across sources:** relevance to the query, how much the source can be trusted (official, government, academic, docs, code, press, site, forum, blog, loose post), engagement compared within each platform, and date. Off-topic results (the "uv" Python tool vs. UV light) are filtered out.
-- **Quotes the server checks:** a key finding, and any "confirmed" verdict, must carry the exact sentence from the source. The server looks for it, word for word, in the text it read itself, and refuses the finding if it is not there, returning the closest real sentence.
+- **Trust check, on request only:** off by default and turned on per research (`check: true` on `trawl_start`), only when you ask for fact-checking in that run. Then the AI cross-checks the sources and verifies the key findings against the primary source, and every key finding and "confirmed" verdict must carry the exact sentence from the source: the server looks for it, word for word, in the text it read itself, and refuses the finding if it is not there, returning the closest real sentence. Without it, a research goes from collection straight to the report, and the report says the check did not run.
 - **Community voice, not just pages:** the most-commented discussions are read automatically; when most results come from one subreddit, Trawl searches inside it too.
 - **Official sources that need JavaScript:** read with the Chrome or Edge you already have, headless and with an empty profile. Never used against anti-bot checks. Game announcements on Steam count as official.
 - **A real time window:** `since_days` on every dated source, with a final check that drops what falls outside.
 - **Junk filter:** GitHub repos with bought stars are flagged ⚠ SUSPEITO and sink; cross-posted Reddit threads collapse into one.
 - **Memory and radar:** `trawl_recall` shows what earlier researches found; `trawl_radar` repeats a search on a schedule and shows only what is new.
-- **Deep reading, tracked:** the server keeps the full text of everything it reads, and a reading ledger records how much of each text actually reached your AI. Long sources it only saw as short passages (video transcripts, tutorials, documentation) go to a deep-reading phase: read in full, findings registered with checked quotes. The report says how much was read in depth, not just "read".
-- **A research conductor:** sessions saved to disk go through plan → collect → deep read → cross-check → verify → report. `trawl_next` always says the next step, and the report refuses any citation that was not registered.
+- **Deep reading, tracked:** the server keeps the full text of everything it reads, and a reading ledger records how much of each text actually reached your AI. Long sources it only saw as short passages (video transcripts, tutorials, documentation) go to a deep-reading phase: read in full, findings registered. The report says how much was read in depth, not just "read".
+- **A research conductor:** sessions saved to disk go through plan → collect → deep read → report (with the trust check on request: plan → collect → deep read → cross-check → verify → report). `trawl_next` always says the next step, and the report refuses any citation that was not registered.
 
 Your AI does the thinking and the writing; the server searches, stores and enforces the method. It never calls an LLM on its own (except Grok, if you turn on X search through xAI).
 
@@ -50,7 +50,7 @@ If Docker itself is closed (after a reboot, say), the local SearXNG is down and 
 
 | Without any key | With a key |
 |---|---|
-| Web through local SearXNG, Reddit (Reddit's own search with live votes, threads with comments, comment search across Reddit via PullPush; RSS and Arctic Shift as fallbacks), Hacker News, Discourse forums, YouTube (with transcripts), GitHub (uses your `gh` login), MCP Registry, arXiv, OpenAlex, Stack Overflow, Wikipedia, reading X posts | Web through Brave, Tavily or Exa; Reddit OAuth (only with an app Reddit already approved); X search (twitterapi.io at ~US$0.15 per 1,000 posts, xAI/Grok, or the official API); SkillsMP |
+| Web through local SearXNG, Reddit (Reddit's own search with live votes when Reddit lets your address in, RSS and Arctic Shift as fallbacks; since Nov 2026 Reddit answers many addresses with a 403 "blocked by network security" unless you are logged in, see `REDDIT_COOKIE` below), Hacker News, Discourse forums, YouTube (with transcripts), GitHub (uses your `gh` login), MCP Registry, arXiv, OpenAlex, Stack Overflow, Wikipedia, reading X posts | Web through Brave, Tavily or Exa; Reddit OAuth (only with an app Reddit already approved); X search (twitterapi.io at ~US$0.15 per 1,000 posts, xAI/Grok, or the official API); SkillsMP |
 
 Without SearXNG or a web key, your AI uses its own web search and registers the results with `trawl_add_sources`.
 
@@ -124,14 +124,14 @@ On Linux/macOS, the same command (`node /path/to/trawl/dist/index.js radar run -
 | `trawl_doctor` | Which sources are on, and how to turn on the rest |
 | `trawl_collect` | One-step collection: variants × sources, one ranking, the best read in full, relevant passages |
 | `trawl_search` | Search several sources at once, in one ranking |
-| `trawl_read` | Read a whole source as clean Markdown, in windows (in a session, keeps the text for quote checks and records how much you read) |
+| `trawl_read` | Read a whole source as clean Markdown, in windows (in a session, keeps the text for quote checks and records how much you read). Also reads a subreddit page (`reddit.com/r/Name/new`) as a list of posts |
 | `trawl_ask_repo` | Ask DeepWiki how a GitHub repo works (AI answer: confirm in the code) |
-| `trawl_start` | Open a research session (`deep_read`: how many long sources must be read in full; 0 skips the phase) |
+| `trawl_start` | Open a research session (`deep_read`: how many long sources must be read in full, 0 skips the phase; `check`: turn the trust check on for this run, off by default) |
 | `trawl_plan` | Register sub-questions, source layers, official domains and forums |
 | `trawl_add_sources` | Register sources found outside the server |
 | `trawl_add_findings` | Register findings (each with sources; key findings with a checked quote) and gaps |
-| `trawl_crosscheck` | Cross-check findings: conflicts, consensus, blind spots |
-| `trawl_verify` | Register the verdict for each key finding ("confirmed" needs a quote from the primary source) |
+| `trawl_crosscheck` | Cross-check findings: conflicts, consensus, blind spots (trust check only) |
+| `trawl_verify` | Register the verdict for each key finding, "confirmed" needs a quote from the primary source (trust check only) |
 | `trawl_report` | Build the report (Markdown + HTML) and validate every citation |
 | `trawl_next` | Current phase and the exact next step (`read_more` lists more long sources to study, even after the report) |
 | `trawl_sessions` | List saved researches |
@@ -163,7 +163,7 @@ A real example: [docs/exemplos](docs/exemplos) has a report produced end to end 
 
 - Trawl reads public pages and public APIs, at a polite pace (per-host rate limits, caching, `Retry-After` honored).
 - It never solves CAPTCHAs, never forges anti-bot tokens and never uses the headless browser against a bot check. Sources that block it are reported as gaps.
-- The optional `REDDIT_COOKIE` uses your own logged-in Reddit session to get fuller results. That goes against Reddit's terms and can put your account at risk; it is off unless you set it.
+- The optional `REDDIT_COOKIE` uses your own logged-in Reddit session: Reddit's site search for posts and for comments, and every thread read through its JSON in the original language (the site shows a machine translation to your account's language; Trawl never quotes that). On addresses Reddit blocks, it is the only way to search Reddit. It goes against Reddit's terms and can put your account at risk; it is off unless you set it. Without it, comment search falls back to the PullPush archive, which is often down.
 - Respect the terms of the sites and APIs you turn on.
 
 ## Development

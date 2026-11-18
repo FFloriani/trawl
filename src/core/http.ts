@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { BROWSER_UA, userAgent } from "../config.ts";
 import { cache } from "./cache.ts";
 import { log } from "./log.ts";
@@ -147,11 +148,28 @@ async function readBody(res: Response, maxBytes: number): Promise<{ text: string
   return { text: decoder.decode(buf), truncated };
 }
 
+/** True when the response came from another host or path than the one asked for. */
+export function redirectedAway(asked: string, final: string): boolean {
+  try {
+    const a = new URL(asked);
+    const f = new URL(final);
+    return a.hostname.replace(/^www\./, "") !== f.hostname.replace(/^www\./, "") || a.pathname.replace(/\/+$/, "") !== f.pathname.replace(/\/+$/, "");
+  } catch {
+    return false;
+  }
+}
+
 export async function request(url: string, opts: RequestOptions = {}): Promise<HttpResponse> {
   const method = opts.method ?? (opts.json !== undefined || opts.body !== undefined ? "POST" : "GET");
   const body = opts.json !== undefined ? JSON.stringify(opts.json) : opts.body;
   const cacheTtl = opts.cacheTtlMs ?? 0;
-  const cacheKey = `${method} ${url} ${body ?? ""}`;
+  // The same URL answers differently with and without a session or key (Reddit sends a visitor to
+  // the login page): the identity goes into the key, hashed so no secret reaches the cache.
+  const identity = Object.entries(opts.headers ?? {})
+    .filter(([k, v]) => v && /^(cookie|authorization|x-api-key)$/i.test(k))
+    .map(([, v]) => v)
+    .join("|");
+  const cacheKey = `${method} ${url} ${body ?? ""}${identity ? ` as:${createHash("sha256").update(identity).digest("hex").slice(0, 16)}` : ""}`;
 
   if (cacheTtl > 0) {
     const hit = await cache.get<HttpResponse>(cacheKey, cacheTtl);
@@ -224,7 +242,8 @@ export async function request(url: string, opts: RequestOptions = {}): Promise<H
       truncated,
       fromCache: false,
     };
-    if (cacheTtl > 0) await cache.set(cacheKey, out);
+    // A redirect to another page (a login wall, a block page) is not the answer to this URL: never kept.
+    if (cacheTtl > 0 && !redirectedAway(url, out.url)) await cache.set(cacheKey, out);
     return out;
   }
   throw lastError instanceof Error ? lastError : new Error(`request failed: ${url}`);

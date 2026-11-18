@@ -5,7 +5,8 @@ import type { Availability, Connector, ReadResult, SearchHit, SearchQuery } from
 import { errMessage, isoDate, oneLine, stripTags, truncate } from "../core/util.ts";
 import { arcticPost, arcticScores, arcticSearchDiscovered, arcticSearchSubreddit, arcticStatus, arcticThread } from "./arcticshift.ts";
 import { pullpushPosts } from "./pullpush.ts";
-import { commentsMarkdown, shredditComments, shredditSearch } from "./shreddit.ts";
+import { BLOCK_NOTE, hasSession, rejectSession, sessionCookie, sessionRejected } from "./reddit-session.ts";
+import { commentsMarkdown, shredditComments, shredditSearch, shredditSubredditFeed } from "./shreddit.ts";
 
 // Three backends. With a free "script" app (REDDIT_CLIENT_ID/SECRET) we use the OAuth API:
 // ~100 req/min, scores and nested comments. Without it, Arctic Shift (keyless archive with
@@ -108,34 +109,32 @@ async function oauthGet<T>(path: string, ttl: number, signal?: AbortSignal): Pro
 
 // ---------- logged-in session (opt-in) ----------
 
-// With the user's own session cookie (REDDIT_COOKIE), www.reddit.com/*.json answers as that user:
-// 100 posts per call, full post text, the post's vote and nested comments. The cookie never
-// leaves this machine except to reddit.com, and a rejected cookie switches back to keyless mode.
-let cookieRejected = "";
-
-function cookieHeader(): string {
-  const v = config.keys.redditCookie ?? "";
-  return v.includes("=") ? v : `reddit_session=${v}`;
-}
-
-const hasCookie = () => Boolean(config.keys.redditCookie) && !cookieRejected;
-const hasJsonApi = () => hasOAuth() || hasCookie();
+// With the user's own session cookie (REDDIT_COOKIE), the JSON of a thread answers as that user,
+// with the original text (the site pages may show Reddit's machine translation). The JSON
+// *search* answers 403 to many addresses even with the session (measured 2026-11-08), so after
+// one such answer it is skipped for the rest of the process and the site search does the work.
+const hasJsonApi = () => hasOAuth() || hasSession();
+let jsonSearchBlocked = false;
 
 /** Reddit's JSON API: the approved OAuth app when configured, else the logged-in session. */
 async function apiGet<T>(path: string, ttl: number, signal?: AbortSignal): Promise<T> {
   if (hasOAuth()) return oauthGet<T>(path, ttl, signal);
   const [p, qs] = path.split("?");
+  const cookie = sessionCookie();
   try {
     return await getJson<T>(`https://www.reddit.com${p}.json${qs ? `?${qs}` : ""}`, {
       browser: true,
-      headers: { cookie: cookieHeader() },
+      headers: cookie ? { cookie } : {},
       cacheTtlMs: ttl,
       maxRetryWaitMs: 10_000,
       signal,
     });
   } catch (err) {
-    if (err instanceof HttpError && (err.status === 401 || err.status === 403)) {
-      cookieRejected = "o Reddit recusou o cookie da sessão (expirado ou inválido); atualize REDDIT_COOKIE no .env da pasta de dados (trawl_doctor mostra onde)";
+    // 401 = the session is gone. 403 = this address (or a private place) is blocked: the session is fine.
+    if (err instanceof HttpError && err.status === 401) rejectSession();
+    if (err instanceof HttpError && err.status === 403 && /\/search$/.test(p ?? "")) {
+      jsonSearchBlocked = true;
+      throw new Error(`a busca pela API do Reddit está bloqueada neste endereço (403); ${hasSession() ? "a busca do site, com a sessão, segue funcionando" : BLOCK_NOTE}`);
     }
     throw err;
   }
@@ -150,31 +149,40 @@ export const reddit: Connector = {
   label: "Reddit",
   async availability(): Promise<Availability> {
     if (hasOAuth()) return { ok: true, mode: "API OAuth (credenciais aprovadas, ~100 req/min)" };
-    if (hasCookie()) return { ok: true, mode: "sessão logada (REDDIT_COOKIE): JSON do Reddit com dados completos; sem chave como reserva" };
     const arctic = arcticStatus();
+    const archive = arctic.up ? "" : ` (Arctic Shift em pausa agora: ${arctic.lastError})`;
+    if (hasSession()) {
+      return {
+        ok: true,
+        mode: `sessão logada (REDDIT_COOKIE): busca do próprio site do Reddit com votos atuais e leitura das conversas pelo JSON, no texto original; reserva em RSS e Arctic Shift${archive}`,
+        note: "subreddit:Nome restringe a um subreddit. A fonte reddit_comments busca dentro de comentários do Reddit inteiro.",
+      };
+    }
     return {
       ok: true,
-      mode: `busca do próprio site do Reddit (votos e comentários atuais), com reserva em RSS, PullPush e Arctic Shift; comentários das threads com votos reais${arctic.up ? "" : ` (Arctic Shift em pausa agora: ${arctic.lastError})`}`,
-      note: `${cookieRejected ? `${cookieRejected}. ` : ""}subreddit:Nome restringe a um subreddit. A fonte reddit_comments busca dentro de comentários do Reddit inteiro.`,
+      mode: `sem sessão: busca do site do Reddit quando ele deixa, com reserva em RSS (cerca de 1 pedido a cada 30 s) e Arctic Shift${archive}`,
+      note: `${sessionRejected() ? `${sessionRejected()}. ` : ""}Desde nov/2026 o Reddit responde 403 ("blocked by network security") a muitos endereços sem sessão: aí só sobram o RSS e o arquivo. subreddit:Nome restringe a um subreddit.`,
       enable:
-        "Opcional: desde nov/2025 o Reddit só libera apps OAuth novos por aprovação (Responsible Builder Policy). Se você já tem um app aprovado, ponha REDDIT_CLIENT_ID e REDDIT_CLIENT_SECRET no .env da pasta de dados (trawl_doctor mostra onde)",
+        "Com a sua sessão do Reddit (REDDIT_COOKIE no .env da pasta de dados, trawl_doctor mostra onde) a busca do site e a leitura das conversas voltam. Apps OAuth novos dependem de aprovação do Reddit (Responsible Builder Policy); com um app aprovado, use REDDIT_CLIENT_ID e REDDIT_CLIENT_SECRET.",
     };
   },
   async search(q: SearchQuery): Promise<SearchHit[]> {
     const limit = Math.min(q.limit, 50);
     const { subreddit, rest } = splitSubreddit(q.query);
-    if (!hasJsonApi()) return keylessSearch(q, limit, subreddit, rest);
     if (hasOAuth()) return apiSearch(q, limit, subreddit, rest);
-    // Logged-in session: the site's search and the JSON search rank differently (measured
-    // 2026-10-11: each found relevant posts the other missed), so run both and interleave.
+    if (!hasSession()) return keylessSearch(q, limit, subreddit, rest);
+    // Logged-in session: the site's search, plus the JSON search while this address is not blocked
+    // (they rank differently: measured 2026-10-11, each found relevant posts the other missed).
     const [site, api] = await Promise.allSettled([
       shredditSearch(subreddit ? rest || subreddit : q.query, { subreddit, sinceDays: q.sinceDays, limit, signal: q.signal }),
-      apiSearch(q, limit, subreddit, rest),
+      jsonSearchBlocked ? Promise.resolve([] as SearchHit[]) : apiSearch(q, limit, subreddit, rest),
     ]);
     const lists = [site, api].filter((s) => s.status === "fulfilled").map((s) => (s as PromiseFulfilledResult<SearchHit[]>).value);
     const merged = dedupeCrossposts(interleaveUnique(lists)).slice(0, limit);
-    // A rejected cookie or a blocked site search ends up here with too little: use the keyless chain.
-    return merged.length ? merged : keylessSearch(q, limit, subreddit, rest);
+    if (merged.length) return merged;
+    // Nothing from the session paths: the keyless chain, without asking the site search a second time.
+    const why = site.status === "rejected" ? [`site: ${errMessage(site.reason)}`] : [];
+    return keylessSearch(q, limit, subreddit, rest, why);
   },
 };
 
@@ -194,6 +202,25 @@ async function apiSearch(q: SearchQuery, limit: number, subreddit: string | unde
     metrics: { score: p.score, comments: p.num_comments },
     tags: [`r/${p.subreddit}`, ...(p.over_18 ? ["NSFW"] : [])],
   }));
+}
+
+/**
+ * One comment in its original language, through the JSON of its thread (the site search shows
+ * Reddit's machine translation to the account's language). Needs the session or OAuth.
+ */
+export async function originalComment(
+  postId: string,
+  commentId: string,
+  signal?: AbortSignal,
+): Promise<{ body: string; author?: string; score?: number; created?: number } | undefined> {
+  if (!hasJsonApi()) return undefined;
+  const data = await apiGet<[unknown, { data?: { children?: Array<{ kind: string; data: RedditComment }> } }]>(
+    `/comments/${postId}/_/${commentId}?context=0&limit=1&depth=1&raw_json=1`,
+    TTL.social,
+    signal,
+  );
+  const c = data[1]?.data?.children?.find((x) => x.kind === "t1")?.data;
+  return c?.body ? { body: c.body, author: c.author, score: c.score, created: c.created_utc } : undefined;
 }
 
 /** Round-robin over ranked lists, keeping the first copy of each thread (fuller record wins ties). */
@@ -220,13 +247,15 @@ export function interleaveUnique(lists: SearchHit[][]): SearchHit[] {
  *  3. global: PullPush archive keyword search + Arctic votes;
  *  4. global: Arctic Shift over the topic's subreddits.
  */
-async function keylessSearch(q: SearchQuery, limit: number, subreddit: string | undefined, rest: string): Promise<SearchHit[]> {
-  const errors: string[] = [];
-  try {
-    const hits = await shredditSearch(subreddit ? rest || subreddit : q.query, { subreddit, sinceDays: q.sinceDays, limit, signal: q.signal });
-    if (hits.length) return dedupeCrossposts(hits);
-  } catch (err) {
-    errors.push(`site: ${errMessage(err)}`);
+async function keylessSearch(q: SearchQuery, limit: number, subreddit: string | undefined, rest: string, triedSite: string[] = []): Promise<SearchHit[]> {
+  const errors: string[] = [...triedSite];
+  if (!triedSite.length) {
+    try {
+      const hits = await shredditSearch(subreddit ? rest || subreddit : q.query, { subreddit, sinceDays: q.sinceDays, limit, signal: q.signal });
+      if (hits.length) return dedupeCrossposts(hits);
+    } catch (err) {
+      errors.push(`site: ${errMessage(err)}`);
+    }
   }
   if (subreddit) {
     if (arcticStatus().up) {
@@ -239,7 +268,9 @@ async function keylessSearch(q: SearchQuery, limit: number, subreddit: string | 
     return rssSearch(q, limit, subreddit, rest);
   }
   try {
-    return await addArcticScores(await rssSearch(q, limit, undefined, rest), q.signal);
+    const hits = await rssSearch(q, limit, undefined, rest);
+    if (hits.length) return await addArcticScores(hits, q.signal);
+    errors.push("rss: nenhum post");
   } catch (err) {
     errors.push(`rss: ${errMessage(err)}`);
   }
@@ -249,7 +280,16 @@ async function keylessSearch(q: SearchQuery, limit: number, subreddit: string | 
   } catch (err) {
     errors.push(`pullpush: ${errMessage(err)}`);
   }
-  if (arcticStatus().up) return arcticSearchDiscovered(q.query, limit, q.sinceDays, q.signal);
+  if (arcticStatus().up) {
+    try {
+      const hits = await arcticSearchDiscovered(q.query, limit, q.sinceDays, q.signal);
+      if (hits.length) return hits;
+      errors.push("arctic: nenhum post nos subreddits do tema");
+    } catch (err) {
+      errors.push(`arctic: ${errMessage(err)}`);
+    }
+  }
+  // Every path failed or came back empty: say why, instead of a silent "0 results".
   throw new Error(errors.join(" | "));
 }
 
@@ -324,6 +364,91 @@ export function splitSubreddit(query: string): { subreddit?: string; rest: strin
 
 export function redditThreadId(url: string): string | undefined {
   return /\/comments\/([a-z0-9]+)/i.exec(url)?.[1];
+}
+
+export type FeedSort = "new" | "hot" | "top";
+
+const TOP_WINDOW: Record<string, number | undefined> = { hour: 1, day: 1, week: 7, month: 31, year: 365, all: undefined };
+
+/**
+ * A subreddit's front page or feed: reddit.com/r/Name, /r/Name/new, /r/Name/top?t=week, and the
+ * same paths with .json or .rss. Anything else under /r/Name (wiki, about, a post) is not a feed.
+ */
+export function subredditTarget(url: string): { subreddit: string; sort: FeedSort; sinceDays?: number } | undefined {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (u.hostname.replace(/^(www|old|new|np|m)\./, "") !== "reddit.com") return undefined;
+  const path = u.pathname.replace(/\.(json|rss)$/i, "");
+  const m = /^\/r\/([A-Za-z0-9_]{2,21})(?:\/(hot|new|top|rising|best|controversial))?\/?$/i.exec(path);
+  if (!m) return undefined;
+  const kind = (m[2] ?? "hot").toLowerCase();
+  const sort: FeedSort = kind === "new" ? "new" : kind === "top" ? "top" : "hot";
+  const t = (u.searchParams.get("t") ?? "day").toLowerCase();
+  return { subreddit: m[1]!, sort, sinceDays: sort === "top" ? (t in TOP_WINDOW ? TOP_WINDOW[t] : 1) : undefined };
+}
+
+const FEED_LABEL: Record<FeedSort, string> = { new: "posts mais novos", hot: "posts em alta", top: "posts mais votados" };
+
+/** The posts of a subreddit feed as a Markdown list (titles in the original language). */
+export async function readSubreddit(url: string, limit = 25): Promise<ReadResult> {
+  const target = subredditTarget(url);
+  if (!target) throw new Error("não é a página de um subreddit (reddit.com/r/Nome ou /r/Nome/new)");
+  const { subreddit, sort, sinceDays } = target;
+  const errors: string[] = [];
+  let rows: Array<{ title: string; url: string; created?: string; score?: number; comments?: number; author?: string }> = [];
+  let via = "";
+
+  try {
+    // A crosspost also brings its original from the other subreddit: keep only this one's posts.
+    const own = new RegExp(`/r/${subreddit}/`, "i");
+    rows = (await shredditSubredditFeed(subreddit, sort, { sinceDays, limit: limit + 5 })).filter((p) => own.test(p.url)).slice(0, limit);
+    via =hasSession() ? "site do Reddit, com a sua sessão" : "site do Reddit";
+  } catch (err) {
+    errors.push(`site: ${errMessage(err)}`);
+  }
+  if (!rows.length && arcticStatus().up) {
+    try {
+      const hits = await arcticSearchSubreddit(subreddit, "", limit, sinceDays);
+      rows = hits.map((h) => ({ title: h.title, url: h.url, created: h.published, score: h.metrics?.score, comments: h.metrics?.comments, author: h.author }));
+      via = "arquivo Arctic Shift (pode atrasar algumas horas; votos do arquivo, não os atuais)";
+    } catch (err) {
+      errors.push(`arctic: ${errMessage(err)}`);
+    }
+  }
+  if (!rows.length) {
+    throw new Error(errors.length ? `não consegui listar r/${subreddit}: ${errors.join(" | ")}` : `r/${subreddit} não tem posts nesse filtro`);
+  }
+  if (sort === "new") rows.sort((a, b) => (isoDate(b.created) ?? "").localeCompare(isoDate(a.created) ?? ""));
+
+  return {
+    url: `https://www.reddit.com/r/${subreddit}/${sort === "hot" ? "" : `${sort}/`}`,
+    title: `r/${subreddit} · ${FEED_LABEL[sort]}`,
+    source: "reddit",
+    note: `Lista de posts lida pelo ${via}. Para ler um post com os comentários, chame trawl_read com o link dele.`,
+    content: rows
+      .map((r) => {
+        const meta = [
+          r.created ? `${isoDate(r.created)?.slice(0, 16).replace("T", " ")} UTC` : "",
+          r.score !== undefined ? `▲${r.score}` : "",
+          r.comments !== undefined ? `${r.comments} coment.` : "",
+          r.author ? `u/${r.author}` : "",
+        ].filter(Boolean);
+        return `- [${r.title.replace(/[[\]]/g, "")}](${r.url})${meta.length ? ` · ${meta.join(" · ")}` : ""}`;
+      })
+      .join("\n"),
+  };
+}
+
+/** A share link (reddit.com/r/Name/s/Code) opens the post after a redirect: follow it once. */
+export async function resolveRedditShare(url: string): Promise<string> {
+  const cookie = sessionCookie();
+  const res = await request(url, { browser: true, headers: cookie ? { cookie } : {} });
+  if (!redditThreadId(res.url)) throw new Error("o link de compartilhamento do Reddit não levou a um post");
+  return res.url;
 }
 
 function renderOauthComments(

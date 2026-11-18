@@ -24,7 +24,8 @@ const hit = (url: string, source: SearchHit["source"], extra: Partial<SearchHit>
 
 describe("research session lifecycle", () => {
   it("walks plan → collect → crosscheck → verify → report → done", async () => {
-    const { meta } = await createSession({ question: "Qual o melhor servidor MCP de busca?", depth: "quick" });
+    // This research asks for the trust check, so it goes through verification before the report.
+    const { meta } = await createSession({ question: "Qual o melhor servidor MCP de busca?", depth: "quick", check: true });
     let data = await loadSession(meta.id);
     expect(computeStatus(data).phase).toBe("plan");
 

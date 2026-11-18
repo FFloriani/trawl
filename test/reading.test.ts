@@ -30,8 +30,14 @@ const hit = (url: string, source: SearchHit["source"], extra: Partial<SearchHit>
 const AT = "2026-10-12T00:00:00.000Z";
 
 /** A standard session whose sub-question already meets its targets: only the reading is missing. */
-async function readyForReading(opts: { depth?: "quick" | "standard" | "deep"; deepRead?: number } = {}) {
-  const { meta } = await createSession({ question: "Como fazer roupa em camadas no Roblox?", depth: opts.depth ?? "standard", deepRead: opts.deepRead });
+async function readyForReading(opts: { depth?: "quick" | "standard" | "deep"; deepRead?: number; check?: boolean } = {}) {
+  const { meta } = await createSession({
+    question: "Como fazer roupa em camadas no Roblox?",
+    depth: opts.depth ?? "standard",
+    deepRead: opts.deepRead,
+    // Most of these tests follow the session into the crosscheck, so the trust check is on unless a test says otherwise.
+    check: opts.check ?? true,
+  });
   await updateMeta(meta.id, (m) => {
     m.plan = { subquestions: [{ id: "Q1", question: "Como se faz?", layers: ["community"] }], at: AT };
   });

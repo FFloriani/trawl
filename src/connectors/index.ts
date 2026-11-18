@@ -6,7 +6,7 @@ import { forums } from "./forums.ts";
 import { githubCode, githubDiscussions, githubIssues, githubRepos } from "./github.ts";
 import { hackernews } from "./hackernews.ts";
 import { openalex } from "./openalex.ts";
-import { redditComments } from "./pullpush.ts";
+import { redditComments } from "./reddit-comments.ts";
 import { reddit } from "./reddit.ts";
 import { stackexchange } from "./stackexchange.ts";
 import { searchWebAll, web } from "./web.ts";

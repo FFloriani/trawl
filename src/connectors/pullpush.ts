@@ -1,5 +1,5 @@
 import { getJson, TTL } from "../core/http.ts";
-import type { Connector, SearchHit, SearchQuery } from "../core/types.ts";
+import type { SearchHit, SearchQuery } from "../core/types.ts";
 import { isoDate, oneLine } from "../core/util.ts";
 
 // PullPush (pullpush.io): Pushshift-style archive of Reddit with keyword search across ALL of
@@ -40,22 +40,16 @@ export function commentToHit(c: PullPushComment): SearchHit | undefined {
   };
 }
 
-export const redditComments: Connector = {
-  name: "reddit_comments",
-  label: "Reddit (comentários, via PullPush)",
-  async availability() {
-    return { ok: true, mode: "busca em comentários do Reddit inteiro pelo arquivo PullPush, sem chave" };
-  },
-  async search(q: SearchQuery): Promise<SearchHit[]> {
-    const params = new URLSearchParams({ q: q.query, size: String(Math.min(q.limit * 2, 100)) });
-    if (q.sinceDays) params.set("after", String(Math.floor(Date.now() / 1000 - q.sinceDays * 86400)));
-    const data = await getJson<{ data?: PullPushComment[] }>(`${API}/comment/?${params}`, { cacheTtlMs: TTL.social, timeoutMs: 25_000, signal: q.signal });
-    return (data.data ?? [])
-      .map(commentToHit)
-      .filter((h): h is SearchHit => Boolean(h))
-      .slice(0, q.limit);
-  },
-};
+/** Comments that mention the words anywhere on Reddit (archive). The reserve of the reddit_comments source. */
+export async function pullpushComments(q: SearchQuery): Promise<SearchHit[]> {
+  const params = new URLSearchParams({ q: q.query, size: String(Math.min(q.limit * 2, 100)) });
+  if (q.sinceDays) params.set("after", String(Math.floor(Date.now() / 1000 - q.sinceDays * 86400)));
+  const data = await getJson<{ data?: PullPushComment[] }>(`${API}/comment/?${params}`, { cacheTtlMs: TTL.social, timeoutMs: 25_000, signal: q.signal });
+  return (data.data ?? [])
+    .map(commentToHit)
+    .filter((h): h is SearchHit => Boolean(h))
+    .slice(0, q.limit);
+}
 
 interface PullPushPost {
   id: string;

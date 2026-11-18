@@ -41,12 +41,22 @@ export function browserPath(): string | undefined {
   return detected ?? undefined;
 }
 
-const CHALLENGE = /just a moment|checking your browser|verify you are human|are you a robot|enable javascript and cookies|captcha|cf-challenge|attention required/i;
+const CHALLENGE =
+  /just a moment|checking your browser|verify you are human|are you a robot|enable javascript and cookies|captcha|cf-challenge|attention required|prove your humanity|you.{0,3}re a real person/i;
 
 /** True when the rendered page is a bot check rather than content; such pages are discarded. */
 export function looksLikeChallenge(html: string): boolean {
   const head = html.slice(0, 20_000);
   return CHALLENGE.test(head) && html.length < 60_000;
+}
+
+/**
+ * The same check on the extracted text. Inline images (an SVG logo as a data: URI) can make a
+ * bot-check page look long, so they are dropped before measuring what is left.
+ */
+export function isChallengeText(markdown: string): boolean {
+  const text = markdown.replace(/!?\[[^\]]*\]\((?:data:[^)]*|[^)]*)\)/g, " ").replace(/\s+/g, " ");
+  return text.length < 3000 && CHALLENGE.test(text);
 }
 
 // At most two browsers at a time: each render is a full Chrome process.

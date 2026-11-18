@@ -55,8 +55,14 @@ export interface SessionMeta {
   officialDomains?: string[];
   /** Discourse forums about the subject, searched by the "forums" source. */
   forums?: string[];
-  /** How many long sources must be read in full before the crosscheck; default comes from the depth. */
+  /** How many long sources must be read in full before the report; default comes from the depth. */
   deepRead?: number;
+  /**
+   * Trust check (crosscheck, verification against primary sources, quotes checked by the server).
+   * Always created off: it runs only when the user asks for it in that research. Sessions from
+   * before this field have it undefined and keep checking, as they did (see checkOn).
+   */
+  check?: boolean;
   /** Set on sessions that keep the reading ledger; older ones only know the size of stored texts. */
   readingLedger?: boolean;
   crosscheck?: Crosscheck;
@@ -288,7 +294,12 @@ export interface CreateInput {
   sinceDays?: number;
   /** Overrides how many long sources the research must read in full. */
   deepRead?: number;
+  /** Turn the trust check on for this research (default: off). */
+  check?: boolean;
 }
+
+/** Whether a session runs the trust check: off for new ones unless asked; older sessions (no field) keep it. */
+export const checkOn = (meta: Pick<SessionMeta, "check">): boolean => meta.check !== false;
 
 export async function createSession(input: CreateInput): Promise<{ meta: SessionMeta; dir: string }> {
   const id = shortId("tr-", 6);
@@ -304,6 +315,7 @@ export async function createSession(input: CreateInput): Promise<{ meta: Session
     depth: input.depth ?? "standard",
     sinceDays: input.sinceDays,
     ...(input.deepRead !== undefined ? { deepRead: input.deepRead } : {}),
+    check: input.check === true,
     readingLedger: true,
     createdAt: now(),
     updatedAt: now(),

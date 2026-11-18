@@ -5,7 +5,7 @@ import { VERSION } from "../config.ts";
 import type { Metrics } from "../core/types.ts";
 import { compactNumber, domainOf, slugify } from "../core/util.ts";
 import { layerOf, readingStatus } from "./phases.ts";
-import type { SessionData, SourceRecord } from "./session.ts";
+import { checkOn, type SessionData, type SourceRecord } from "./session.ts";
 
 export interface ReportInput {
   title: string;
@@ -182,7 +182,9 @@ export function renderReport(data: SessionData, input: ReportInput): RenderedRep
           `- Leitura: texto guardado de ${reading.stored} fontes (${reading.chars.toLocaleString("pt-BR")} caracteres); lidas a fundo pelo modelo: ${reading.deep}; só em trechos: ${reading.partial}; sem leitura registrada: ${reading.unseen}`,
         ]
       : []),
-    `- Achados: ${data.claims.size}; verificados: ${verifs.length}`,
+    // Said in the report itself, so nobody reads a finding as verified when the check did not run.
+    `- Checagem de confiança (cruzamento e verificação na fonte original): ${checkOn(meta) ? "ligada" : "desligada nesta pesquisa; os achados dizem o que as fontes afirmam, sem verificação"}`,
+    `- Achados: ${data.claims.size}${checkOn(meta) ? `; verificados: ${verifs.length}` : ""}`,
     meta.sinceDays ? `- Janela: últimos ${meta.sinceDays} dias` : "- Janela: sem limite de data",
     "",
   );

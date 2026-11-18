@@ -88,21 +88,25 @@ export async function twapiTopReplies(id: string, max: number): Promise<string[]
     .map((r) => `- **@${r.author?.userName ?? "?"}** (♥${r.likeCount ?? 0}): ${oneLine(r.text, 500)}`);
 }
 
-let creditsCache: { at: number; text: string } | undefined;
+let creditsCache: { at: number; text: string; empty: boolean } | undefined;
 
-/** Remaining credits for trawl_doctor, cached 10 minutes (the info endpoint is free). */
-export async function twapiCredits(): Promise<string> {
-  if (creditsCache && Date.now() - creditsCache.at < 600_000) return creditsCache.text;
+/**
+ * Remaining credits, cached 10 minutes (the info endpoint is free). `empty` = nothing left to
+ * spend: every search would come back 402, so the source counts as off until a recharge.
+ */
+export async function twapiCredits(): Promise<{ text: string; empty: boolean }> {
+  if (creditsCache && Date.now() - creditsCache.at < 600_000) return creditsCache;
   try {
     const info = await getJson<{ recharge_credits?: number; total_bonus_credits?: number }>(`${TWAPI}/oapi/my/info`, {
       headers: headers(),
       retries: 0,
       timeoutMs: 8000,
     });
-    const text = `créditos: ${info.recharge_credits ?? 0} pagos + ${info.total_bonus_credits ?? 0} de bônus`;
-    creditsCache = { at: Date.now(), text };
-    return text;
+    const paid = info.recharge_credits ?? 0;
+    const bonus = info.total_bonus_credits ?? 0;
+    creditsCache = { at: Date.now(), text: `créditos: ${paid} pagos + ${bonus} de bônus`, empty: paid + bonus <= 0 };
+    return creditsCache;
   } catch (err) {
-    return `créditos: não foi possível consultar (${errMessage(err)})`;
+    return { text: `créditos: não foi possível consultar (${errMessage(err)})`, empty: false };
   }
 }

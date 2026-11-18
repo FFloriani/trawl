@@ -81,9 +81,11 @@ describe("Trawl over real MCP stdio", () => {
   });
 
   it("runs a full quick research end to end, checking every quote against the source", async () => {
-    const start = await call("trawl_start", { question: "Como desenvolvedores avaliam agentes de deep research open source?", depth: "quick", since_days: 365 });
+    // The trust check is off by default; this research asks for it.
+    const start = await call("trawl_start", { question: "Como desenvolvedores avaliam agentes de deep research open source?", depth: "quick", since_days: 365, check: true });
     const id = /Sessão criada: (tr-[0-9a-z]+)/.exec(start)?.[1];
     expect(id).toBeTruthy();
+    expect(start).toContain("checagem de confiança: ligada");
 
     const plan = await call("trawl_plan", {
       session_id: id,
@@ -138,7 +140,7 @@ describe("Trawl over real MCP stdio", () => {
     });
 
     const next = await call("trawl_next", { session_id: id });
-    expect(next).toContain("5/6 verificação");
+    expect(next).toContain("3/4 verificação");
     const claimId = /- (C[0-9a-z]{5}) \[fact, chave\]/.exec(next)?.[1];
     expect(claimId).toBeTruthy();
 
@@ -160,6 +162,41 @@ describe("Trawl over real MCP stdio", () => {
 
     // The next research on the theme starts from what this one found.
     expect(await call("trawl_recall", { query: "deep research agentes" })).toContain(id!);
+  });
+
+  it("keeps the trust check off unless asked: no quotes needed, no crosscheck, no verification", async () => {
+    const start = await call("trawl_start", { question: "Pesquisa sem checagem de confiança, só coleta e relatório", depth: "quick" });
+    const id = /Sessão criada: (tr-[0-9a-z]+)/.exec(start)?.[1];
+    expect(start).toContain("checagem de confiança: desligada");
+    await call("trawl_plan", {
+      session_id: id,
+      subquestions: [
+        { question: "Primeira pergunta de teste?", layers: ["code"] },
+        { question: "Segunda pergunta de teste?", layers: ["community"] },
+      ],
+    });
+    // A key finding with no quote is fine when the check is off; a quote sent anyway is ignored.
+    const added = await call("trawl_add_findings", {
+      session_id: id,
+      subquestion: "Q1",
+      findings: [
+        { text: "Achado marcado como chave, sem citação", kind: "fact", sources: ["https://example.com/a"], key: true },
+        { text: "Achado com citação inventada que deve ser ignorada", kind: "fact", sources: ["https://example.com/a"], key: true, quotes: [{ source: "https://example.com/a", text: "this exact sentence was never written anywhere at all" }] },
+      ],
+    });
+    expect(added).toContain("Registrados 2 achados");
+    expect(added).toContain("citações enviadas foram ignoradas");
+    await call("trawl_add_findings", {
+      session_id: id,
+      subquestion: "Q2",
+      findings: [
+        { text: "Achado um da segunda pergunta", kind: "opinion", sources: ["https://example.org/b"] },
+        { text: "Achado dois da segunda pergunta", kind: "opinion", sources: ["https://example.org/b"] },
+      ],
+    });
+    const next = await call("trawl_next", { session_id: id });
+    expect(next).toContain("relatório");
+    expect(next).not.toMatch(/cruzamento|verificação/i);
   });
 
   it.skipIf(!browserPath())("reads a page that builds its text with JavaScript, and Steam announcements as official", async () => {

@@ -21,6 +21,7 @@ import {
   addReading,
   addSources,
   addVerifications,
+  checkOn,
   createSession,
   hitToSource,
   listSessions,
@@ -303,7 +304,7 @@ export function registerTools(server: McpServer): void {
         ].filter(Boolean);
         const text = collectText(res, args.show, args.queries, header);
         const next = args.session_id
-          ? "\nPróximo: registre os achados com trawl_add_findings. Achado-chave precisa de quotes: copie dos trechos acima a frase exata (idioma original, 5+ palavras). Para ver uma fonte inteira, trawl_read com source_id. O que veio aqui são trechos: fontes longas serão cobradas na fase de leitura funda."
+          ? `\nPróximo: registre os achados com trawl_add_findings.${meta && !checkOn(meta) ? "" : " Achado-chave precisa de quotes: copie dos trechos acima a frase exata (idioma original, 5+ palavras)."} Para ver uma fonte inteira, trawl_read com source_id. O que veio aqui são trechos: fontes longas serão cobradas na fase de leitura funda.`
           : "";
         return text + next;
       }),
@@ -314,7 +315,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Ler uma fonte",
       description:
-        "Lê a fonte inteira em Markdown limpo: thread do Reddit com comentários mais votados, item do HN com comentários, repositório do GitHub (métricas + README), issue/PR, resumo do arXiv, post do X ou qualquer página. Conteúdo longo vem em trechos (use offset).",
+        "Lê a fonte inteira em Markdown limpo: thread do Reddit com comentários mais votados, a lista de posts de um subreddit (reddit.com/r/Nome/new, /r/Nome/top?t=week), item do HN com comentários, repositório do GitHub (métricas + README), issue/PR, resumo do arXiv, post do X ou qualquer página. Conteúdo longo vem em trechos (use offset).",
       inputSchema: {
         url: z.string().optional().describe("URL a ler"),
         source_id: z.string().optional().describe("Ou o id [S…] de uma fonte já registrada na sessão"),
@@ -417,7 +418,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Começar pesquisa",
       description:
-        "Abre uma sessão de pesquisa profunda e devolve o primeiro passo. A partir daí, siga sempre o que trawl_next mandar: plano → coleta → cruzamento → verificação → relatório.",
+        "Abre uma sessão de pesquisa profunda e devolve o primeiro passo. A partir daí, siga sempre o que trawl_next mandar: plano → coleta → leitura funda → relatório. A checagem de confiança (cruzamento e verificação) só entra com check=true, e só quando o usuário pedir nesta pesquisa.",
       inputSchema: {
         question: z.string().min(5).describe("A pergunta completa, com o contexto que importa"),
         goal: z.string().optional().describe("Para que decisão ou entrega a pesquisa serve"),
@@ -431,7 +432,13 @@ export function registerTools(server: McpServer): void {
           .min(0)
           .max(60)
           .optional()
-          .describe("Quantas fontes longas (vídeo com transcrição, tutorial, documentação) ler inteiras antes do cruzamento. Padrão pela profundidade: quick 0, standard 6, deep 12. Use um número alto para estudar todo o material coletado, 0 para pular a fase"),
+          .describe("Quantas fontes longas (vídeo com transcrição, tutorial, documentação) ler inteiras antes do relatório. Padrão pela profundidade: quick 0, standard 6, deep 12. Use um número alto para estudar todo o material coletado, 0 para pular a fase"),
+        check: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Checagem de confiança: cruzamento entre fontes, verificação dos achados-chave na fonte original e citação literal conferida pelo servidor. SEMPRE começa desligada: passe true só quando o usuário pedir checagem, verificação ou confirmação dos fatos NESTA pesquisa",
+          ),
       },
       annotations: { readOnlyHint: false, openWorldHint: false },
     },
@@ -445,6 +452,7 @@ export function registerTools(server: McpServer): void {
           sinceDays: args.since_days,
           language: args.language,
           deepRead: args.deep_read,
+          check: args.check,
         });
         const avail = await availabilityAll();
         const data = await loadSession(meta.id);
@@ -576,7 +584,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Registrar achados",
       description:
-        "Registra achados de uma sub-pergunta, cada um ligado às fontes [S…] que o sustentam, e as lacunas (o que procurou e não achou). Achado-chave (key=true) precisa de quotes: a frase exata da fonte, que o servidor confere palavra por palavra no texto que ele mesmo leu; se não bater, recusa. URLs novas são registradas sozinhas.",
+        "Registra achados de uma sub-pergunta, cada um ligado às fontes [S…] que o sustentam, e as lacunas (o que procurou e não achou). Só com a checagem de confiança ligada (check=true no trawl_start, a pedido do usuário): achado-chave (key=true) precisa de quotes, a frase exata da fonte, que o servidor confere palavra por palavra no texto que ele mesmo leu; se não bater, recusa. Com a checagem desligada (o padrão), quotes não são exigidas nem conferidas. URLs novas são registradas sozinhas.",
       inputSchema: {
         session_id: sessionIdSchema,
         subquestion: z.string().describe("Q1, Q2…"),
@@ -586,7 +594,7 @@ export function registerTools(server: McpServer): void {
               text: z.string().min(5).describe("O achado em uma ou duas frases, com número e data quando houver"),
               kind: z.enum(["fact", "stat", "opinion", "inference"]),
               sources: z.array(z.string()).describe("Ids [S…] ou URLs"),
-              key: z.boolean().optional().describe("true se a conclusão depende deste achado (vai para verificação; exige quotes)"),
+              key: z.boolean().optional().describe("true se a conclusão depende deste achado (só importa com a checagem ligada: vai para verificação e exige quotes)"),
               quotes: z
                 .array(
                   z.object({
@@ -626,15 +634,18 @@ export function registerTools(server: McpServer): void {
           if (!data.sources.has(trimmed)) unknown.push(trimmed);
           return trimmed;
         };
+        // The trust check is off unless the user asked for it in this research: then quotes are
+        // neither required nor checked (nor kept).
+        const checking = checkOn(data.meta);
         const findings = args.findings.map((f) => {
-          const quotes = (f.quotes ?? []).map((q) => ({ source: resolve(q.source), text: q.text.trim() }));
+          const quotes = checking ? (f.quotes ?? []).map((q) => ({ source: resolve(q.source), text: q.text.trim() })) : [];
           const ids = [...new Set([...f.sources.map(resolve), ...quotes.map((q) => q.source)])];
           return { text: f.text, kind: f.kind, sources: ids, key: f.key, quotes };
         });
         if (unknown.length) throw new Error(`fontes desconhecidas: ${[...new Set(unknown)].join(", ")}. Use ids devolvidos por trawl_search/trawl_collect/trawl_read/trawl_add_sources ou a URL.`);
         const noSource = findings.filter((f) => !f.sources.length && f.kind !== "inference");
         if (noSource.length) throw new Error(`achado sem fonte (só inference pode ficar sem): "${oneLine(noSource[0]!.text, 80)}"`);
-        const noQuote = findings.filter((f) => f.key && f.kind !== "inference" && !f.quotes.length);
+        const noQuote = checking ? findings.filter((f) => f.key && f.kind !== "inference" && !f.quotes.length) : [];
         if (noQuote.length) {
           throw new Error(
             `achado-chave sem citação: "${oneLine(noQuote[0]!.text, 80)}". Mande quotes com a frase exata da fonte que o prova (copiada do trawl_collect ou do trawl_read, no idioma original) ou marque key=false. Nada foi registrado.`,
@@ -686,6 +697,7 @@ export function registerTools(server: McpServer): void {
           qs.length
             ? `Citações conferidas pelo servidor: ${n("text")} no texto da fonte, ${n("snippet")} no trecho da busca${n("unreadable") ? `, ${n("unreadable")} sem conferir (o servidor não conseguiu ler a fonte; não vale para "confirmed")` : ""}.`
             : "",
+          !checking && args.findings.some((f) => f.quotes?.length) ? "Checagem de confiança desligada nesta pesquisa: as citações enviadas foram ignoradas." : "",
           ...warnings,
           sub.ok
             ? `${args.subquestion} atingiu a meta. Chame trawl_next para ver o que falta.`
@@ -701,7 +713,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Cruzar achados",
       description:
-        "Sem análise: devolve todos os achados agrupados, com camada e domínio de cada fonte, para você procurar contradições. Com análise: registra conflitos, consensos e pontos cegos.",
+        "Parte da checagem de confiança (opcional: check=true no trawl_start, a pedido do usuário). Sem análise: devolve todos os achados agrupados, com camada e domínio de cada fonte, para você procurar contradições. Com análise: registra conflitos, consensos e pontos cegos.",
       inputSchema: {
         session_id: sessionIdSchema,
         conflicts: z
@@ -767,7 +779,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Verificar achados",
       description:
-        "Sem results: lista os achados-chave que precisam ser conferidos na fonte original. Com results: registra o veredito de cada um (confirmed, corrected, unverified, false). confirmed e corrected exigem quote: a frase exata da fonte primária, que o servidor confere no texto da fonte; se não bater, recusa.",
+        "Parte da checagem de confiança (opcional: check=true no trawl_start, a pedido do usuário). Sem results: lista os achados-chave que precisam ser conferidos na fonte original. Com results: registra o veredito de cada um (confirmed, corrected, unverified, false). confirmed e corrected exigem quote: a frase exata da fonte primária, que o servidor confere no texto da fonte; se não bater, recusa.",
       inputSchema: {
         session_id: sessionIdSchema,
         results: z
@@ -880,7 +892,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Gerar relatório",
       description:
-        "Monta o relatório final (Markdown + HTML) com o texto que você escreveu. Cite fontes com ids entre colchetes, ex.: [S1a2b3c]. O servidor recusa ids desconhecidos e acrescenta verificação, guia de afirmações, voz da comunidade, lacunas, metodologia e fontes.",
+        "Monta o relatório final (Markdown + HTML) com o texto que você escreveu. Cite fontes com ids entre colchetes, ex.: [S1a2b3c]. O servidor recusa ids desconhecidos e acrescenta (se houve checagem) verificação e guia de afirmações, e sempre a voz da comunidade, lacunas, metodologia e fontes.",
       inputSchema: {
         session_id: sessionIdSchema,
         rerender: z.boolean().optional().describe("Remontar o último relatório com o texto salvo (após novas verificações), sem reenviar title/summary/sections"),

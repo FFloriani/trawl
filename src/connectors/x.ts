@@ -174,8 +174,16 @@ export const x: Connector = {
   async availability(): Promise<Availability> {
     const b = backends().map(([id]) => id);
     if (b.length) {
-      const credits = config.keys.twitterapiIo ? ` (${await twapiCredits()})` : "";
-      return { ok: true, mode: `busca por ${b.join(" → ")}${credits}; leitura de posts pelo FxTwitter, grátis` };
+      const credits = config.keys.twitterapiIo ? await twapiCredits() : undefined;
+      // twitterapi.io with no credit answers 402 to every search: alone, the source is off until a recharge.
+      if (credits?.empty && b.length === 1) {
+        return {
+          ok: false,
+          mode: `twitterapi.io sem crédito (${credits.text}): busca no X desligada até recarregar; leitura de posts pelo FxTwitter continua grátis`,
+          enable: "Recarregue em https://twitterapi.io/payment (cerca de US$0,15 por 1.000 posts), ou ponha XAI_API_KEY ou X_BEARER_TOKEN no .env da pasta de dados.",
+        };
+      }
+      return { ok: true, mode: `busca por ${b.join(" → ")}${credits ? ` (${credits.text}${credits.empty ? ", sem crédito: pula para o próximo" : ""})` : ""}; leitura de posts pelo FxTwitter, grátis` };
     }
     return {
       ok: false,
